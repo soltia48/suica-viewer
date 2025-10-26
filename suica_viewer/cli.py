@@ -39,7 +39,7 @@ SERVICE_NODE_IDS: tuple[int, ...] = (
 READ_COMMAND_CODE = 0x14
 DATA_BLOCK_SIZE = 16
 MAX_BLOCKS_PER_REQUEST = 12
-DEFAULT_SERVER_URL = "https://felica-auth.nyaa.ws"
+DEFAULT_AUTH_SERVER_URL = "https://felica-auth.nyaa.ws"
 
 
 class RemoteCardReader:
@@ -104,8 +104,8 @@ class RemoteCardReader:
 
 
 def resolve_server_url() -> str:
-    value = os.environ.get("SUICA_REMOTE_SERVER_URL", "").strip()
-    return value or DEFAULT_SERVER_URL
+    value = os.environ.get("AUTH_SERVER_URL", "").strip()
+    return value or DEFAULT_AUTH_SERVER_URL
 
 
 def print_section(title: str, *, leading_newline: bool = True) -> None:
