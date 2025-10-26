@@ -1403,7 +1403,13 @@ class SuicaGuiApp:
         self.root.mainloop()
 
 
+def fix_ic_code_map():
+    FelicaStandard.IC_CODE_MAP[0x31] = ("RC-S???", 1, 1)
+
+
 def main() -> None:
+    fix_ic_code_map()
+
     app = SuicaGuiApp()
     app.run()
 

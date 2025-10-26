@@ -457,7 +457,13 @@ def on_connect(tag: Tag):
     reporter.print_sf_gate_in_information()
 
 
+def fix_ic_code_map():
+    FelicaStandard.IC_CODE_MAP[0x31] = ("RC-S???", 1, 1)
+
+
 def main() -> None:
+    fix_ic_code_map()
+
     with nfc.ContactlessFrontend("usb") as clf:
         clf.connect(
             rdwr={
