@@ -377,7 +377,7 @@ class SuicaGuiApp:
 
     def _create_root_window(self) -> tk.Tk:
         root = tk.Tk()
-        root.title("Suica カードビューア")
+        root.title("Suica ビューア")
         root.geometry("1440x900")
         root.minsize(1024, 768)
         return root
