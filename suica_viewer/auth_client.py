@@ -1,7 +1,8 @@
+import http.client
 import json
 import logging
-import urllib.error
-import urllib.request
+import socket
+import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,15 +16,15 @@ class FelicaRemoteClientError(Exception):
     """Raised for client-side transport or validation issues."""
 
 
-def _extract_error_from_http_error(
-    exc: urllib.error.HTTPError,
+def _extract_error_from_payload(
+    data: bytes, default_reason: str
 ) -> tuple[str, int | None]:
     try:
-        payload = json.loads(exc.read().decode("utf-8") or "{}")
+        payload = json.loads(data.decode("utf-8") or "{}")
     except json.JSONDecodeError:
-        return exc.reason, None
+        return default_reason, None
     error = payload.get("error", {})
-    message = error.get("message", exc.reason)
+    message = error.get("message", default_reason)
     errno = error.get("code")
     return message, errno
 
@@ -32,44 +33,93 @@ def _to_json_bytes(payload: Any) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
-def _post_json(
-    server_url: str,
-    path: str,
-    payload: dict[str, Any],
-    timeout: float,
-) -> dict[str, Any]:
-    url = server_url + path
-    body = _to_json_bytes(payload)
-    log.debug("POST %s keys=%s", url, list(payload.keys()))
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = response.read()
-    except urllib.error.HTTPError as exc:
-        message, errno = _extract_error_from_http_error(exc)
-        if errno is not None:
-            raise tt3.Type3TagCommandError(errno)
-        raise FelicaRemoteClientError(f"{exc.code} {exc.reason}: {message}")
-    except urllib.error.URLError as exc:
-        raise FelicaRemoteClientError(f"failed to reach server: {exc.reason}") from exc
+class _KeepAliveHTTPClient:
+    """Maintain a reusable HTTP(S) connection to the auth server."""
 
-    try:
-        decoded = json.loads(data.decode("utf-8") or "{}")
-    except json.JSONDecodeError as exc:
-        raise FelicaRemoteClientError("server returned invalid JSON") from exc
-    if "error" in decoded:
-        error_info = decoded["error"]
-        errno = error_info.get("code")
-        if errno is not None:
-            raise tt3.Type3TagCommandError(errno)
-        raise FelicaRemoteClientError(
-            error_info.get("message", "server reported an error")
+    def __init__(self, base_url: str) -> None:
+        parsed = urllib.parse.urlsplit(base_url)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            raise ValueError("Authentication server URL must use HTTP or HTTPS.")
+        if not parsed.hostname:
+            raise ValueError("Authentication server URL missing hostname.")
+
+        self._scheme = parsed.scheme.lower()
+        self._hostname = parsed.hostname
+        self._port = parsed.port
+        self._netloc = parsed.netloc
+        self._path_prefix = parsed.path.rstrip("/")
+        self._connection: http.client.HTTPConnection | None = None
+        self._base_url_for_log = urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, self._path_prefix, "", "")
+        ).rstrip("/")
+        if not self._base_url_for_log:
+            self._base_url_for_log = f"{parsed.scheme}://{parsed.netloc}"
+
+    def close(self) -> None:
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+
+    def post(self, path: str, payload: dict[str, Any], timeout: float) -> bytes:
+        if not path.startswith("/"):
+            raise ValueError("Request path must start with '/'.")
+        body = _to_json_bytes(payload)
+        log.debug(
+            "POST %s%s keys=%s",
+            self._base_url_for_log,
+            path,
+            list(payload.keys()),
         )
-    return decoded
+        request_path = f"{self._path_prefix}{path}" if self._path_prefix else path
+        headers = {
+            "Content-Type": "application/json",
+            "Connection": "keep-alive",
+        }
+        last_error: Exception | None = None
+        for attempt in range(2):
+            connection = self._ensure_connection(timeout)
+            try:
+                connection.request("POST", request_path, body=body, headers=headers)
+                response = connection.getresponse()
+                data = response.read()
+            except (http.client.HTTPException, OSError, socket.timeout) as exc:
+                last_error = exc
+                self.close()
+                continue
+
+            if response.status >= 400:
+                message, errno = _extract_error_from_payload(data, response.reason)
+                if errno is not None:
+                    raise tt3.Type3TagCommandError(errno)
+                raise FelicaRemoteClientError(
+                    f"{response.status} {response.reason}: {message}"
+                )
+            return data
+
+        if last_error is None:
+            raise FelicaRemoteClientError("failed to reach server: unknown error")
+
+        if isinstance(last_error, socket.timeout):
+            reason = "timed out"
+        else:
+            reason = getattr(last_error, "strerror", None) or str(last_error)
+        raise FelicaRemoteClientError(
+            f"failed to reach server: {reason}"
+        ) from last_error
+
+    def _ensure_connection(self, timeout: float) -> http.client.HTTPConnection:
+        if self._connection is None:
+            self._connection = self._create_connection(timeout)
+        else:
+            self._connection.timeout = timeout
+        return self._connection
+
+    def _create_connection(self, timeout: float) -> http.client.HTTPConnection:
+        if self._scheme == "https":
+            return http.client.HTTPSConnection(
+                self._hostname, self._port, timeout=timeout
+            )
+        return http.client.HTTPConnection(self._hostname, self._port, timeout=timeout)
 
 
 @dataclass
@@ -90,12 +140,17 @@ class FelicaRemoteClient:
         http_timeout: float = 10.0,
         default_exchange_timeout: float = 1.0,
     ) -> None:
-        self.server_url = server_url.rstrip("/")
+        trimmed_url = server_url.rstrip("/") or server_url
+        self.server_url = trimmed_url
         self.tag = tag
         self.session_id = session_id
         self.http_timeout = http_timeout
         self.default_exchange_timeout = default_exchange_timeout
         self.authenticated = False
+        try:
+            self._http_client = _KeepAliveHTTPClient(self.server_url)
+        except ValueError as exc:
+            raise FelicaRemoteClientError(str(exc)) from exc
 
     @property
     def idm(self) -> bytes:
@@ -184,6 +239,19 @@ class FelicaRemoteClient:
             ) from exc
         return bytes.fromhex(response_hex)
 
+    def close(self) -> None:
+        self._http_client.close()
+
+    def reset(
+        self,
+        tag: FelicaStandard,
+        session_id: str | None = None,
+    ) -> None:
+        """Reuse the same transport for a new tag/session."""
+        self.tag = tag
+        self.session_id = session_id
+        self.authenticated = False
+
     def _exchange_with_card(self, command: _CommandEnvelope) -> bytes:
         timeout = (
             command.timeout
@@ -219,4 +287,17 @@ class FelicaRemoteClient:
             self.session_id = session_id
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return _post_json(self.server_url, path, payload, self.http_timeout)
+        data = self._http_client.post(path, payload, self.http_timeout)
+        try:
+            decoded = json.loads(data.decode("utf-8") or "{}")
+        except json.JSONDecodeError as exc:
+            raise FelicaRemoteClientError("server returned invalid JSON") from exc
+        if "error" in decoded:
+            error_info = decoded["error"]
+            errno = error_info.get("code")
+            if errno is not None:
+                raise tt3.Type3TagCommandError(errno)
+            raise FelicaRemoteClientError(
+                error_info.get("message", "server reported an error")
+            )
+        return decoded

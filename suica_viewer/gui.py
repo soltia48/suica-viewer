@@ -478,6 +478,7 @@ class SuicaGuiApp:
             key: tk.StringVar(value="-") for _, key in self.misc_detail_fields
         }
         self.server_url = self._resolve_server_url()
+        self._remote_client: FelicaRemoteClient | None = None
         self.progress_bar: ttk.Progressbar | None = None
 
     def _load_station_data(self) -> None:
@@ -500,8 +501,12 @@ class SuicaGuiApp:
         value = os.environ.get("AUTH_SERVER_URL", "").strip()
         return value or DEFAULT_AUTH_SERVER_URL
 
-    def _create_remote_client(self, tag: FelicaStandard) -> FelicaRemoteClient:
-        return FelicaRemoteClient(self.server_url, tag)
+    def _get_remote_client(self, tag: FelicaStandard) -> FelicaRemoteClient:
+        if self._remote_client is None:
+            self._remote_client = FelicaRemoteClient(self.server_url, tag)
+        else:
+            self._remote_client.reset(tag)
+        return self._remote_client
 
     def _start_nfc_thread(self) -> None:
         self.nfc_thread = threading.Thread(target=self._nfc_loop, daemon=True)
@@ -1083,7 +1088,7 @@ class SuicaGuiApp:
         tag.idm, tag.pmm = polling_result
         self._set_progress(15.0)
 
-        client = self._create_remote_client(tag)
+        client = self._get_remote_client(tag)
         auth_result = client.mutual_authentication(
             SYSTEM_CODE,
             list(AREA_NODE_IDS),
@@ -1389,6 +1394,9 @@ class SuicaGuiApp:
         return local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
 
     def _on_close(self) -> None:
+        if self._remote_client is not None:
+            self._remote_client.close()
+            self._remote_client = None
         self.root.quit()
 
     def run(self) -> None:
