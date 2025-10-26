@@ -1,0 +1,25 @@
+{
+  "name": "suica-viewer",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "workspaceFolder": "/workspace/",
+  "remoteUser": "python",
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/workspace/,type=bind,consistency=cached",
+    "source=/dev/bus/usb/,target=/dev/bus/usb/,type=bind"
+  ],
+  "runArgs": ["--device-cgroup-rule=a *:* mrw"],
+  "onCreateCommand": ".devcontainer/on_create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "esbenp.prettier-vscode",
+        "ms-python.python",
+        "ms-python.black-formatter",
+        "njpwerner.autodocstring"
+      ]
+    }
+  }
+}
