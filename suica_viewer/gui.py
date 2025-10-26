@@ -385,6 +385,7 @@ class SuicaGuiApp:
     def _initialize_state(self) -> None:
         self.status_var = tk.StringVar(value="カードをかざしてください。")
         self.last_updated_var = tk.StringVar(value="最終更新: —")
+        self.progress_var = tk.DoubleVar(value=0.0)
         self.summary_vars: dict[str, tk.StringVar] = {
             "idi": tk.StringVar(value="-"),
             "pmi": tk.StringVar(value="-"),
@@ -477,6 +478,7 @@ class SuicaGuiApp:
             key: tk.StringVar(value="-") for _, key in self.misc_detail_fields
         }
         self.server_url = self._resolve_server_url()
+        self.progress_bar: ttk.Progressbar | None = None
 
     def _load_station_data(self) -> None:
         try:
@@ -585,6 +587,14 @@ class SuicaGuiApp:
             anchor="w",
         )
         status_label.pack(fill=tk.X)
+
+        self.progress_bar = ttk.Progressbar(
+            header_frame,
+            variable=self.progress_var,
+            maximum=100,
+            mode="determinate",
+        )
+        self.progress_bar.pack(fill=tk.X, pady=(8, 0))
 
         ttk.Label(
             header_frame,
@@ -1021,11 +1031,13 @@ class SuicaGuiApp:
         return "break"
 
     def _nfc_loop(self) -> None:
+        self._reset_progress()
         self._update_status("NFC リーダーを初期化しています…")
 
         try:
             with nfc.ContactlessFrontend("usb") as clf:
                 self._update_status("カードをかざしてください。")
+                self._reset_progress()
                 while True:
                     try:
                         clf.connect(
@@ -1035,21 +1047,29 @@ class SuicaGuiApp:
                             }
                         )
                     except Exception as exc:
+                        self._reset_progress()
                         self._update_status(f"読み取りエラー: {exc}")
         except IOError as exc:
+            self._reset_progress()
             self._update_status(f"NFC リーダーを初期化できません: {exc}")
 
     def _on_connect(self, tag: Tag) -> bool:
+        self._reset_progress()
         if not isinstance(tag, FelicaStandard):
             self._update_status("FeliCa 以外のタグを検出しました。")
             return True
 
+        self._update_status("カード情報を取得しています…")
+        self._set_progress(5.0)
+
         try:
             card_data = self._collect_card_data(tag)
         except FelicaRemoteClientError as exc:
+            self._reset_progress()
             self._update_status(f"サーバ通信エラー: {exc}")
             return True
         except Exception as exc:
+            self._reset_progress()
             self._update_status(f"カード情報の取得に失敗しました: {exc}")
             return True
 
@@ -1061,6 +1081,7 @@ class SuicaGuiApp:
         if len(polling_result) != 2:
             raise RuntimeError("Polling 応答が不正です。")
         tag.idm, tag.pmm = polling_result
+        self._set_progress(15.0)
 
         client = self._create_remote_client(tag)
         auth_result = client.mutual_authentication(
@@ -1068,6 +1089,7 @@ class SuicaGuiApp:
             list(AREA_NODE_IDS),
             list(SERVICE_NODE_IDS),
         )
+        self._set_progress(30.0)
 
         idi_hex = (auth_result.get("issue_id") or auth_result.get("idi") or "").upper()
         pmi_hex = (
@@ -1094,13 +1116,21 @@ class SuicaGuiApp:
         extractor = SuicaCardDataExtractor(reader, self.station_code_lookup)
 
         issue_primary = extractor.read_issue_information_primary()
+        self._set_progress(45.0)
         attribute_info = extractor.read_attribute_information()
+        self._set_progress(55.0)
         issue_secondary = extractor.read_issue_information_secondary()
+        self._set_progress(65.0)
         unknown_info = extractor.read_unknown_information()
+        self._set_progress(75.0)
         transaction_history = extractor.read_transaction_history()
+        self._set_progress(85.0)
         commuter_info = extractor.read_commuter_pass_information()
+        self._set_progress(92.0)
         gate_info = extractor.read_gate_in_out_information()
+        self._set_progress(97.0)
         sf_gate_info = extractor.read_sf_gate_in_information()
+        self._set_progress(100.0)
 
         return {
             "system": system_info,
@@ -1342,6 +1372,14 @@ class SuicaGuiApp:
     def _finalize_card_update(self) -> None:
         self.last_updated_var.set(f"最終更新: {self._current_local_timestamp()}")
         self._update_status("カード情報を更新しました。カードを離してください。")
+        self._set_progress(100.0)
+
+    def _set_progress(self, value: float) -> None:
+        clamped = max(0.0, min(100.0, value))
+        self.root.after(0, self.progress_var.set, clamped)
+
+    def _reset_progress(self) -> None:
+        self._set_progress(0.0)
 
     def _update_status(self, message: str) -> None:
         self.root.after(0, self.status_var.set, message)
