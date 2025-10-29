@@ -4,7 +4,7 @@ import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -669,33 +669,116 @@ class SuicaGuiApp:
         except tk.TclError:
             # Fallback to the default theme if "clam" is unavailable.
             pass
+        self.root.configure(bg="#f3f4f8")
 
-        base_font = ("Helvetica", 14)
+        base_font = ("Helvetica", 12)
         self.root.option_add("*TLabel.font", base_font)
         self.root.option_add("*TButton.font", base_font)
         self.root.option_add("*Treeview.font", base_font)
         self.root.option_add("*TEntry.font", base_font)
 
-        style.configure("Treeview", rowheight=34)
-        style.configure("Treeview.Heading", font=("Helvetica", 15, "bold"))
-        style.configure("Status.TLabel", font=("Helvetica", 20, "bold"))
-        style.configure("SummaryKey.TLabel", font=("Helvetica", 15, "bold"))
-        style.configure("SummaryValue.TLabel", font=("Helvetica", 15))
-        style.configure("Meta.TLabel", font=("Helvetica", 12))
-        style.configure("TNotebook.Tab", padding=(20, 10), font=("Helvetica", 14))
+        style.configure("Main.TFrame", background="#f3f4f8")
+        style.configure("SectionWrapper.TFrame", background="#f3f4f8")
+        style.configure(
+            "SectionBody.TFrame",
+            background="#ffffff",
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure("SectionInner.TFrame", background="#ffffff")
+
+        style.configure(
+            "Treeview",
+            rowheight=28,
+            background="#ffffff",
+            fieldbackground="#ffffff",
+            borderwidth=0,
+        )
+        style.configure(
+            "Treeview.Heading",
+            font=("Helvetica", 13, "bold"),
+            background="#eef1f7",
+            foreground="#1f2937",
+            borderwidth=0,
+        )
+        style.configure(
+            "Status.TLabel",
+            font=("Helvetica", 16, "bold"),
+            background="#f3f4f8",
+            foreground="#1f2937",
+        )
+        style.configure(
+            "SummaryKey.TLabel",
+            font=("Helvetica", 12, "bold"),
+            background="#ffffff",
+            foreground="#374151",
+        )
+        style.configure(
+            "SummaryValue.TLabel",
+            font=("Helvetica", 12),
+            background="#ffffff",
+            foreground="#111827",
+        )
+        style.configure(
+            "Meta.TLabel",
+            font=("Helvetica", 11),
+            foreground="#666666",
+            background="#f3f4f8",
+        )
+        style.configure(
+            "SectionMeta.TLabel",
+            font=("Helvetica", 11),
+            foreground="#6b7280",
+            background="#ffffff",
+        )
+        style.configure(
+            "SectionHeader.TLabel",
+            font=("Helvetica", 13, "bold"),
+            background="#f3f4f8",
+            foreground="#1f2937",
+        )
+        style.configure(
+            "SubsectionHeader.TLabel",
+            font=("Helvetica", 12, "bold"),
+            background="#ffffff",
+            foreground="#1f2937",
+        )
+        style.configure("TNotebook", background="#f3f4f8", borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(12, 6), font=("Helvetica", 12))
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", "#ffffff"), ("!selected", "#f3f4f8")],
+            foreground=[("selected", "#111827"), ("!selected", "#4b5563")],
+        )
+        style.configure(
+            "Status.Horizontal.TProgressbar",
+            troughcolor="#dbe1ef",
+            background="#4c6ef5",
+            bordercolor="#dbe1ef",
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", "#e0ecff")],
+            foreground=[("selected", "#000000")],
+        )
 
     def _create_scrollable_container(self) -> ttk.Frame:
-        container = ttk.Frame(self.root)
+        container = ttk.Frame(self.root, style="Main.TFrame")
         container.pack(fill=tk.BOTH, expand=True)
 
-        canvas = tk.Canvas(container, highlightthickness=0)
+        canvas = tk.Canvas(
+            container,
+            highlightthickness=0,
+            background="#f3f4f8",
+            borderwidth=0,
+        )
         scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
 
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        content_frame = ttk.Frame(canvas)
+        content_frame = ttk.Frame(canvas, style="Main.TFrame")
         window_id = canvas.create_window((0, 0), window=content_frame, anchor="nw")
 
         content_frame.bind(
@@ -729,11 +812,15 @@ class SuicaGuiApp:
         return content_frame
 
     def _build_ui(self) -> None:
-        main_frame = ttk.Frame(self.scrollable_container, padding=16)
+        main_frame = ttk.Frame(
+            self.scrollable_container, padding=24, style="Main.TFrame"
+        )
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        header_frame = ttk.Frame(main_frame)
-        header_frame.pack(fill=tk.X, pady=(0, 16))
+        header_frame = ttk.Frame(main_frame, padding=(0, 0, 0, 16), style="Main.TFrame")
+        header_frame.pack(fill=tk.X)
+        header_frame.columnconfigure(0, weight=1)
+        header_frame.columnconfigure(1, weight=0)
 
         status_label = ttk.Label(
             header_frame,
@@ -741,44 +828,45 @@ class SuicaGuiApp:
             style="Status.TLabel",
             anchor="w",
         )
-        status_label.pack(fill=tk.X)
+        status_label.grid(row=0, column=0, sticky="w")
 
         self.progress_bar = ttk.Progressbar(
             header_frame,
             variable=self.progress_var,
             maximum=100,
             mode="determinate",
+            style="Status.Horizontal.TProgressbar",
         )
-        self.progress_bar.pack(fill=tk.X, pady=(8, 0))
+        self.progress_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
 
         ttk.Label(
             header_frame,
             textvariable=self.last_updated_var,
             style="Meta.TLabel",
-            anchor="w",
-        ).pack(fill=tk.X, pady=(6, 0))
+            anchor="e",
+        ).grid(row=0, column=1, sticky="e", padx=(16, 0))
 
         ttk.Separator(main_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 16))
 
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill=tk.BOTH, expand=True)
 
-        overview_frame = ttk.Frame(notebook, padding=12)
+        overview_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
         notebook.add(overview_frame, text="概要")
 
-        issue_frame = ttk.Frame(notebook, padding=12)
+        issue_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
         notebook.add(issue_frame, text="発行情報")
 
-        history_frame = ttk.Frame(notebook, padding=12)
+        history_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
         notebook.add(history_frame, text="履歴")
 
-        gate_frame = ttk.Frame(notebook, padding=12)
+        gate_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
         notebook.add(gate_frame, text="改札")
 
-        misc_frame = ttk.Frame(notebook, padding=12)
+        misc_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
         notebook.add(misc_frame, text="その他")
 
-        details_frame = ttk.Frame(notebook, padding=12)
+        details_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
         notebook.add(details_frame, text="詳細")
 
         self._build_overview_tab(overview_frame)
@@ -817,17 +905,59 @@ class SuicaGuiApp:
                 wraplength=wraplength,
             ).grid(row=row, column=1, sticky="w", pady=pady)
 
+    def _create_section(
+        self,
+        parent: tk.Widget,
+        title: str,
+        *,
+        padding: int | tuple[int, int, int, int] = 12,
+        margin: tuple[int, int] = (0, 16),
+        fill: Literal["none", "x", "y", "both"] = "x",
+        expand: bool = False,
+        variant: Literal["primary", "embedded"] = "primary",
+    ) -> ttk.Frame:
+        if variant == "embedded":
+            wrapper_style = "SectionInner.TFrame"
+            header_style = "SubsectionHeader.TLabel"
+            pack_kwargs: dict[str, Any] = {"pady": margin}
+        else:
+            wrapper_style = "SectionWrapper.TFrame"
+            header_style = "SectionHeader.TLabel"
+            pack_kwargs = {"pady": margin, "padx": 4}
+
+        section_wrapper = ttk.Frame(parent, style=wrapper_style)
+        section_wrapper.pack(fill=fill, expand=expand, **pack_kwargs)
+
+        header_row = ttk.Frame(section_wrapper, style=wrapper_style)
+        header_row.pack(fill=tk.X)
+        ttk.Label(header_row, text=title, style=header_style).pack(side=tk.LEFT)
+
+        if isinstance(padding, tuple):
+            padding_values = padding
+        else:
+            padding_values = (padding, padding, padding, padding)
+
+        content = ttk.Frame(
+            section_wrapper,
+            padding=padding_values,
+            style="SectionBody.TFrame",
+        )
+        content.pack(fill=fill, expand=expand, pady=(6, 0))
+        return content
+
     def _create_treeview(
         self,
         parent: ttk.Frame,
         column_specs: Iterable[TreeColumnSpec],
         *,
         odd_row_color: str,
-        even_row_color: str = "#ffffff",
+        even_row_color: str = "#fafafa",
     ) -> ttk.Treeview:
         specs = list(column_specs)
         column_ids = [spec.heading for spec in specs]
-        tree = ttk.Treeview(parent, columns=column_ids, show="headings")
+        tree = ttk.Treeview(
+            parent, columns=column_ids, show="headings", selectmode="browse"
+        )
         for spec in specs:
             tree.heading(spec.heading, text=spec.heading)
             column_kwargs: dict[str, Any] = {"width": spec.width}
@@ -876,19 +1006,30 @@ class SuicaGuiApp:
         ]
 
         for title, items in sections:
-            section_frame = ttk.LabelFrame(frame, text=title, padding=20)
-            section_frame.pack(fill=tk.X, expand=False, pady=(0, 12))
+            section_frame = self._create_section(
+                frame,
+                title,
+                padding=(12, 8, 12, 8),
+                margin=(0, 12),
+            )
             section_frame.columnconfigure(1, weight=1)
             self._populate_label_value_grid(
                 section_frame,
                 items,
                 self.summary_vars,
-                label_width=14,
+                label_width=12,
+                wraplength=640,
+                label_style="SummaryKey.TLabel",
+                value_style="SummaryValue.TLabel",
             )
 
     def _build_issue_tab(self, frame: ttk.Frame) -> None:
-        commuter_frame = ttk.LabelFrame(frame, text="定期券詳細", padding=20)
-        commuter_frame.pack(fill=tk.X, expand=False)
+        commuter_frame = self._create_section(
+            frame,
+            "定期券詳細",
+            padding=(12, 8, 12, 8),
+            margin=(0, 12),
+        )
         commuter_frame.columnconfigure(1, weight=1)
 
         commuter_labels = [
@@ -905,48 +1046,62 @@ class SuicaGuiApp:
             commuter_frame,
             commuter_labels,
             self.commuter_detail_vars,
-            label_width=14,
+            label_width=12,
+            wraplength=640,
         )
 
-        issue_container = ttk.LabelFrame(frame, text="発行関連情報", padding=16)
-        issue_container.pack(fill=tk.BOTH, expand=True, pady=(16, 0))
+        issue_container = self._create_section(
+            frame,
+            "発行関連情報",
+            padding=(12, 12, 12, 12),
+            margin=(0, 12),
+        )
 
         for section_title, fields in self.issue_detail_sections:
-            section_frame = ttk.LabelFrame(
-                issue_container, text=section_title, padding=16
+            section_frame = self._create_section(
+                issue_container,
+                section_title,
+                padding=(10, 6, 10, 6),
+                margin=(0, 8),
+                variant="embedded",
             )
-            section_frame.pack(fill=tk.X, expand=False, pady=(0, 12))
             section_frame.columnconfigure(1, weight=1)
             self._populate_label_value_grid(
                 section_frame,
                 fields,
                 self.issue_detail_vars,
-                label_width=18,
+                label_width=16,
+                wraplength=660,
             )
 
     def _build_history_tab(self, frame: ttk.Frame) -> None:
-        search_frame = ttk.Frame(frame, padding=(0, 8))
-        search_frame.pack(fill=tk.X, pady=(0, 16))
+        search_frame = ttk.Frame(frame, padding=(0, 0, 0, 8), style="Main.TFrame")
+        search_frame.pack(fill=tk.X, pady=(0, 12))
+        search_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(search_frame, text="フィルター:").pack(side=tk.LEFT)
+        ttk.Label(search_frame, text="フィルター", style="Meta.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
         filter_entry = ttk.Entry(
             search_frame,
             textvariable=self.history_filter_var,
-            width=28,
         )
-        filter_entry.pack(side=tk.LEFT, padx=(4, 8))
+        filter_entry.grid(row=0, column=1, sticky="ew", padx=(8, 8))
         self.history_filter_entry = filter_entry
         ttk.Button(
             search_frame,
             text="クリア",
             command=self._clear_history_filter,
-        ).pack(side=tk.LEFT)
+        ).grid(row=0, column=2, sticky="e")
 
-        history_container = ttk.LabelFrame(frame, text="取引履歴", padding=20)
-        history_container.pack(fill=tk.BOTH, expand=True)
-
-        tree_container = ttk.Frame(history_container)
-        tree_container.pack(fill=tk.BOTH, expand=True)
+        history_container = self._create_section(
+            frame,
+            "取引履歴",
+            padding=(4, 4, 4, 4),
+            margin=(0, 0),
+            fill="both",
+            expand=True,
+        )
 
         history_columns = [
             TreeColumnSpec("日時", 200),
@@ -960,19 +1115,22 @@ class SuicaGuiApp:
             TreeColumnSpec("通番", 120, "e"),
         ]
         self.history_tree = self._create_treeview(
-            tree_container,
+            history_container,
             history_columns,
-            odd_row_color="#eef2fb",
+            odd_row_color="#f5f7fb",
         )
 
         self.history_filter_var.trace_add("write", self._apply_history_filter)
 
     def _build_gate_tab(self, frame: ttk.Frame) -> None:
-        gate_container = ttk.LabelFrame(frame, text="改札入出場履歴", padding=20)
-        gate_container.pack(fill=tk.BOTH, expand=True)
-
-        tree_frame = ttk.Frame(gate_container)
-        tree_frame.pack(fill=tk.BOTH, expand=True)
+        gate_container = self._create_section(
+            frame,
+            "改札入出場履歴",
+            padding=(4, 4, 4, 4),
+            margin=(0, 12),
+            fill="both",
+            expand=True,
+        )
 
         gate_columns = [
             TreeColumnSpec("日時", 200),
@@ -985,13 +1143,17 @@ class SuicaGuiApp:
             TreeColumnSpec("定期駅", 200),
         ]
         self.gate_tree = self._create_treeview(
-            tree_frame,
+            gate_container,
             gate_columns,
-            odd_row_color="#eef9f3",
+            odd_row_color="#f5fbf7",
         )
 
-        sf_frame = ttk.LabelFrame(frame, text="SF改札入場情報", padding=20)
-        sf_frame.pack(fill=tk.X, expand=False, pady=(12, 0))
+        sf_frame = self._create_section(
+            frame,
+            "SF改札入場情報",
+            padding=(12, 8, 12, 8),
+            margin=(0, 12),
+        )
         sf_frame.columnconfigure(1, weight=1)
 
         sf_labels = [
@@ -1009,30 +1171,48 @@ class SuicaGuiApp:
             sf_frame,
             sf_labels,
             self.sf_gate_vars,
-            label_width=16,
+            label_width=14,
             wraplength=460,
             padx=(0, 8),
             pady=2,
         )
 
     def _build_misc_tab(self, frame: ttk.Frame) -> None:
-        misc_container = ttk.LabelFrame(frame, text="不明な情報", padding=20)
-        misc_container.pack(fill=tk.X, expand=False)
+        misc_container = self._create_section(
+            frame,
+            "不明な情報",
+            padding=(12, 8, 12, 8),
+            margin=(0, 12),
+        )
         misc_container.columnconfigure(1, weight=1)
 
         self._populate_label_value_grid(
             misc_container,
             self.misc_detail_fields,
             self.misc_detail_vars,
-            label_width=18,
+            label_width=14,
         )
 
     def _build_details_tab(self, frame: ttk.Frame) -> None:
-        toolbar = ttk.Frame(frame, padding=(0, 8))
-        toolbar.pack(fill=tk.X, pady=(0, 16))
+        details_container = self._create_section(
+            frame,
+            "カード情報 JSON",
+            padding=(12, 12, 12, 12),
+            margin=(0, 12),
+            fill="both",
+            expand=True,
+        )
+
+        toolbar = ttk.Frame(details_container, style="SectionInner.TFrame")
+        toolbar.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(toolbar, text="操作", style="SectionMeta.TLabel").pack(side=tk.LEFT)
+
+        button_row = ttk.Frame(toolbar, style="SectionInner.TFrame")
+        button_row.pack(side=tk.RIGHT)
 
         self.copy_details_button = ttk.Button(
-            toolbar,
+            button_row,
             text="JSONをコピー",
             command=self._copy_details_to_clipboard,
             state=tk.DISABLED,
@@ -1040,23 +1220,20 @@ class SuicaGuiApp:
         self.copy_details_button.pack(side=tk.LEFT)
 
         self.export_details_button = ttk.Button(
-            toolbar,
+            button_row,
             text="JSONを書き出し…",
             command=self._export_details_to_file,
             state=tk.DISABLED,
         )
         self.export_details_button.pack(side=tk.LEFT, padx=(8, 0))
 
-        details_container = ttk.LabelFrame(frame, text="カード情報JSON", padding=20)
-        details_container.pack(fill=tk.BOTH, expand=True)
-
-        text_container = ttk.Frame(details_container)
+        text_container = ttk.Frame(details_container, style="SectionInner.TFrame")
         text_container.pack(fill=tk.BOTH, expand=True)
         text_container.columnconfigure(0, weight=1)
         text_container.rowconfigure(0, weight=1)
 
         self.details_text = tk.Text(text_container, wrap=tk.NONE)
-        self.details_text.configure(state=tk.DISABLED, font=("TkFixedFont", 13))
+        self.details_text.configure(state=tk.DISABLED, font=("TkFixedFont", 11))
 
         y_scroll = ttk.Scrollbar(
             text_container, orient=tk.VERTICAL, command=self.details_text.yview
