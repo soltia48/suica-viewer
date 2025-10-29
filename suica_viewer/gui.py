@@ -4,7 +4,7 @@ import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -48,6 +48,90 @@ READ_COMMAND_CODE = 0x14
 DATA_BLOCK_SIZE = 16
 MAX_BLOCKS_PER_REQUEST = 12
 DEFAULT_AUTH_SERVER_URL = "https://felica-auth.nyaa.ws"
+
+SUMMARY_VAR_KEYS: tuple[str, ...] = (
+    "idi",
+    "pmi",
+    "owner_name",
+    "card_type",
+    "balance",
+    "region",
+    "deposit",
+    "initial_amount",
+    "issued_at",
+    "expires_at",
+    "issued_station",
+    "transaction_number",
+    "commuter_pass",
+)
+COMMUTER_DETAIL_KEYS: tuple[str, ...] = (
+    "valid_from",
+    "valid_to",
+    "start_station",
+    "end_station",
+    "via1",
+    "via2",
+    "issued_at",
+)
+SF_GATE_VAR_KEYS: tuple[str, ...] = (
+    "entry_station",
+    "intermediate_entry",
+    "intermediate_entry_date",
+    "intermediate_entry_time",
+    "intermediate_exit",
+    "intermediate_exit_time",
+    "unknown_value1",
+    "unknown_value2",
+)
+ISSUE_DETAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "発行情報1",
+        (
+            ("所有者名", "owner_name"),
+            ("所有者電話番号", "owner_phone_hex"),
+            ("所有者年齢", "owner_age_code"),
+            ("所有者生年月日", "owner_birthdate"),
+            ("第二発行ID", "secondary_issue_id"),
+            ("発行者ID", "issuer_id"),
+            ("デポジット額", "deposit"),
+            ("発行機器", "issued_by"),
+            ("発行駅", "issued_station"),
+            ("発行日", "issued_at"),
+            ("有効期限", "expires_at"),
+        ),
+    ),
+    (
+        "発行情報2",
+        (
+            ("発行機器", "issued_by_detail"),
+            ("発行駅", "issued_station_detail"),
+            ("初期残高", "initial_amount"),
+        ),
+    ),
+    (
+        "属性情報",
+        (
+            ("カード種別", "card_type"),
+            ("地域", "region_display"),
+            ("残高", "attribute_balance"),
+            ("取引通番", "attribute_transaction_number"),
+        ),
+    ),
+)
+MISC_DETAIL_FIELDS: tuple[tuple[str, str], ...] = (
+    ("不明な残高", "unknown_balance"),
+    ("不明な日付", "unknown_date"),
+    ("不明な取引通番", "unknown_transaction_number"),
+)
+HISTORY_FILTER_FIELDS: tuple[str, ...] = (
+    "recorded_on",
+    "transaction_type",
+    "pay_type",
+    "gate_instruction_type",
+    "entry_station",
+    "exit_station",
+    "recorded_by",
+)
 
 
 class RemoteCardReader:
@@ -123,6 +207,39 @@ class TreeColumnSpec:
     heading: str
     width: int
     anchor: str | None = None
+
+
+ProgressCallback = Callable[[float], None]
+
+
+@dataclass
+class CardData:
+    system: SystemInfo
+    issue_primary: dict[str, Any]
+    attribute: dict[str, Any]
+    issue_secondary: dict[str, Any]
+    unknown: dict[str, Any]
+    transaction_history: list[dict[str, Any]]
+    commuter: dict[str, Any]
+    gate: list[dict[str, Any]]
+    sf_gate: dict[str, Any]
+
+    def to_serializable_dict(self) -> dict[str, Any]:
+        return {
+            "system": {
+                "idi_hex": self.system.idi_hex,
+                "idi_display": self.system.idi_display,
+                "pmi": self.system.pmi,
+            },
+            "issue_primary": dict(self.issue_primary),
+            "attribute": dict(self.attribute),
+            "issue_secondary": dict(self.issue_secondary),
+            "unknown": dict(self.unknown),
+            "transaction_history": [dict(entry) for entry in self.transaction_history],
+            "commuter": dict(self.commuter),
+            "gate": [dict(entry) for entry in self.gate],
+            "sf_gate": dict(self.sf_gate),
+        }
 
 
 class SuicaCardDataExtractor:
@@ -362,6 +479,97 @@ class SuicaCardDataExtractor:
         }
 
 
+class CardDataService:
+    """Coordinates remote reads and assembles card data."""
+
+    def __init__(self, station_code_lookup: StationCodeLookup) -> None:
+        self.station_code_lookup = station_code_lookup
+
+    def collect(
+        self,
+        client: FelicaRemoteClient,
+        *,
+        progress_callback: ProgressCallback | None = None,
+    ) -> CardData:
+        auth_result = client.mutual_authentication(
+            SYSTEM_CODE,
+            list(AREA_NODE_IDS),
+            list(SERVICE_NODE_IDS),
+        )
+        self._update_progress(progress_callback, 30.0)
+
+        system_info = self._build_system_info(auth_result)
+
+        reader = RemoteCardReader(client)
+        extractor = SuicaCardDataExtractor(reader, self.station_code_lookup)
+
+        issue_primary = extractor.read_issue_information_primary()
+        self._update_progress(progress_callback, 45.0)
+
+        attribute_info = extractor.read_attribute_information()
+        self._update_progress(progress_callback, 55.0)
+
+        issue_secondary = extractor.read_issue_information_secondary()
+        self._update_progress(progress_callback, 65.0)
+
+        unknown_info = extractor.read_unknown_information()
+        self._update_progress(progress_callback, 75.0)
+
+        transaction_history = extractor.read_transaction_history()
+        self._update_progress(progress_callback, 85.0)
+
+        commuter_info = extractor.read_commuter_pass_information()
+        self._update_progress(progress_callback, 92.0)
+
+        gate_info = extractor.read_gate_in_out_information()
+        self._update_progress(progress_callback, 97.0)
+
+        sf_gate_info = extractor.read_sf_gate_in_information()
+        self._update_progress(progress_callback, 100.0)
+
+        return CardData(
+            system=system_info,
+            issue_primary=issue_primary,
+            attribute=attribute_info,
+            issue_secondary=issue_secondary,
+            unknown=unknown_info,
+            transaction_history=transaction_history,
+            commuter=commuter_info,
+            gate=gate_info,
+            sf_gate=sf_gate_info,
+        )
+
+    def _build_system_info(self, auth_result: dict[str, Any]) -> SystemInfo:
+        idi_hex = (auth_result.get("issue_id") or auth_result.get("idi") or "").upper()
+        pmi_hex = (
+            auth_result.get("issue_parameter") or auth_result.get("pmi") or ""
+        ).upper()
+
+        if not idi_hex:
+            raise RuntimeError("サーバ応答に Issue ID が含まれていません。")
+        if not pmi_hex:
+            raise RuntimeError("サーバ応答に Issue Parameter が含まれていません。")
+
+        try:
+            idi_bytes = bytes.fromhex(idi_hex)
+        except ValueError as exc:
+            raise RuntimeError("Issue ID の形式が不正です。") from exc
+
+        return SystemInfo(
+            idi_hex=idi_hex,
+            idi_display=idi_bytes_to_str(idi_bytes),
+            pmi=pmi_hex,
+        )
+
+    @staticmethod
+    def _update_progress(
+        callback: ProgressCallback | None,
+        value: float,
+    ) -> None:
+        if callback is not None:
+            callback(value)
+
+
 class SuicaGuiApp:
     """Tkinter-based GUI that shows Suica IC card information."""
 
@@ -383,107 +591,49 @@ class SuicaGuiApp:
         return root
 
     def _initialize_state(self) -> None:
-        self.status_var = tk.StringVar(value="カードをかざしてください。")
-        self.last_updated_var = tk.StringVar(value="最終更新: —")
-        self.progress_var = tk.DoubleVar(value=0.0)
-        self.summary_vars: dict[str, tk.StringVar] = {
-            "idi": tk.StringVar(value="-"),
-            "pmi": tk.StringVar(value="-"),
-            "owner_name": tk.StringVar(value="-"),
-            "card_type": tk.StringVar(value="-"),
-            "balance": tk.StringVar(value="-"),
-            "region": tk.StringVar(value="-"),
-            "deposit": tk.StringVar(value="-"),
-            "initial_amount": tk.StringVar(value="-"),
-            "issued_at": tk.StringVar(value="-"),
-            "expires_at": tk.StringVar(value="-"),
-            "issued_station": tk.StringVar(value="-"),
-            "transaction_number": tk.StringVar(value="-"),
-            "commuter_pass": tk.StringVar(value="-"),
-        }
-        self.history_filter_var = tk.StringVar()
+        self.status_var = tk.StringVar(
+            master=self.root, value="カードをかざしてください。"
+        )
+        self.last_updated_var = tk.StringVar(master=self.root, value="最終更新: —")
+        self.progress_var = tk.DoubleVar(master=self.root, value=0.0)
+        self.summary_vars = self._create_string_vars(SUMMARY_VAR_KEYS)
+        self.history_filter_var = tk.StringVar(master=self.root)
         self.current_history: list[dict[str, Any]] = []
         self.current_card_json = ""
         self.copy_details_button: ttk.Button | None = None
         self.export_details_button: ttk.Button | None = None
         self.history_filter_entry: ttk.Entry | None = None
+        self.history_tree: ttk.Treeview | None = None
         self.gate_tree: ttk.Treeview | None = None
         self.current_gate_entries: list[dict[str, Any]] = []
-        self.sf_gate_vars: dict[str, tk.StringVar] = {
-            "entry_station": tk.StringVar(value="-"),
-            "intermediate_entry": tk.StringVar(value="-"),
-            "intermediate_entry_date": tk.StringVar(value="-"),
-            "intermediate_entry_time": tk.StringVar(value="-"),
-            "intermediate_exit": tk.StringVar(value="-"),
-            "intermediate_exit_time": tk.StringVar(value="-"),
-            "unknown_value1": tk.StringVar(value="-"),
-            "unknown_value2": tk.StringVar(value="-"),
-        }
-        self.commuter_detail_vars: dict[str, tk.StringVar] = {
-            "valid_from": tk.StringVar(value="-"),
-            "valid_to": tk.StringVar(value="-"),
-            "start_station": tk.StringVar(value="-"),
-            "end_station": tk.StringVar(value="-"),
-            "via1": tk.StringVar(value="-"),
-            "via2": tk.StringVar(value="-"),
-            "issued_at": tk.StringVar(value="-"),
-        }
-        self.issue_detail_sections: list[tuple[str, list[tuple[str, str]]]] = [
-            (
-                "発行情報1",
-                [
-                    ("所有者名", "owner_name"),
-                    ("所有者電話番号", "owner_phone_hex"),
-                    ("所有者年齢", "owner_age_code"),
-                    ("所有者生年月日", "owner_birthdate"),
-                    ("第二発行ID", "secondary_issue_id"),
-                    ("発行者ID", "issuer_id"),
-                    ("デポジット額", "deposit"),
-                    ("発行機器", "issued_by"),
-                    ("発行駅", "issued_station"),
-                    ("発行日", "issued_at"),
-                    ("有効期限", "expires_at"),
-                ],
-            ),
-            (
-                "発行情報2",
-                [
-                    ("発行機器", "issued_by_detail"),
-                    ("発行駅", "issued_station_detail"),
-                    ("初期残高", "initial_amount"),
-                ],
-            ),
-            (
-                "属性情報",
-                [
-                    ("カード種別", "card_type"),
-                    ("地域", "region_display"),
-                    ("残高", "attribute_balance"),
-                    ("取引通番", "attribute_transaction_number"),
-                ],
-            ),
+        self.sf_gate_vars = self._create_string_vars(SF_GATE_VAR_KEYS)
+        self.commuter_detail_vars = self._create_string_vars(COMMUTER_DETAIL_KEYS)
+        self.issue_detail_sections = ISSUE_DETAIL_SECTIONS
+        issue_keys = [
+            key for _, fields in self.issue_detail_sections for _, key in fields
         ]
-        self.issue_detail_vars: dict[str, tk.StringVar] = {
-            key: tk.StringVar(value="-")
-            for _, fields in self.issue_detail_sections
-            for _, key in fields
-        }
-
-        self.misc_detail_fields: list[tuple[str, str]] = [
-            ("不明な残高", "unknown_balance"),
-            ("不明な日付", "unknown_date"),
-            ("不明な取引通番", "unknown_transaction_number"),
-        ]
-        self.misc_detail_vars: dict[str, tk.StringVar] = {
-            key: tk.StringVar(value="-") for _, key in self.misc_detail_fields
-        }
+        self.issue_detail_vars = self._create_string_vars(issue_keys)
+        self.misc_detail_fields = MISC_DETAIL_FIELDS
+        misc_keys = [key for _, key in self.misc_detail_fields]
+        self.misc_detail_vars = self._create_string_vars(misc_keys)
         self.server_url = self._resolve_server_url()
         self._remote_client: FelicaRemoteClient | None = None
+        self.card_data_service: CardDataService | None = None
         self.progress_bar: ttk.Progressbar | None = None
+        self.details_text: tk.Text | None = None
+
+    def _create_string_vars(
+        self,
+        keys: Iterable[str],
+        *,
+        default: str = "-",
+    ) -> dict[str, tk.StringVar]:
+        return {key: tk.StringVar(master=self.root, value=default) for key in keys}
 
     def _load_station_data(self) -> None:
         try:
             self.station_code_lookup = StationCodeLookup()
+            self.card_data_service = CardDataService(self.station_code_lookup)
         except Exception as exc:
             messagebox.showerror(
                 "駅データ読み込みエラー",
@@ -966,12 +1116,15 @@ class SuicaGuiApp:
             self._apply_history_filter()
 
     def _apply_history_filter(self, *_: Any) -> None:
-        if not self.history_tree.get_children() and not self.current_history:
+        tree = self.history_tree
+        if tree is None:
+            return
+        if not tree.get_children() and not self.current_history:
             return
 
         query = self.history_filter_var.get().strip().lower()
         if not self.current_history:
-            self.history_tree.delete(*self.history_tree.get_children())
+            tree.delete(*tree.get_children())
             return
 
         if not query:
@@ -983,15 +1136,7 @@ class SuicaGuiApp:
             for entry in self.current_history
             if any(
                 query in str(entry.get(field, "")).lower()
-                for field in (
-                    "recorded_on",
-                    "transaction_type",
-                    "pay_type",
-                    "gate_instruction_type",
-                    "entry_station",
-                    "exit_station",
-                    "recorded_by",
-                )
+                for field in HISTORY_FILTER_FIELDS
             )
             or query in str(entry.get("transaction_time", "")).lower()
             or query in str(entry.get("balance", "")).lower()
@@ -1000,6 +1145,9 @@ class SuicaGuiApp:
         self._render_history_rows(filtered)
 
     def _render_history_rows(self, rows: list[dict[str, Any]]) -> None:
+        if self.history_tree is None:
+            return
+
         self.history_tree.delete(*self.history_tree.get_children())
 
         for index, entry in enumerate(rows):
@@ -1081,7 +1229,7 @@ class SuicaGuiApp:
         self.root.after(0, self._apply_card_data, card_data)
         return True
 
-    def _collect_card_data(self, tag: FelicaStandard) -> dict[str, Any]:
+    def _collect_card_data(self, tag: FelicaStandard) -> CardData:
         polling_result = tag.polling(SYSTEM_CODE)
         if len(polling_result) != 2:
             raise RuntimeError("Polling 応答が不正です。")
@@ -1089,65 +1237,13 @@ class SuicaGuiApp:
         self._set_progress(15.0)
 
         client = self._get_remote_client(tag)
-        auth_result = client.mutual_authentication(
-            SYSTEM_CODE,
-            list(AREA_NODE_IDS),
-            list(SERVICE_NODE_IDS),
+        if self.card_data_service is None:
+            raise RuntimeError("カードデータサービスが初期化されていません。")
+
+        return self.card_data_service.collect(
+            client,
+            progress_callback=self._set_progress,
         )
-        self._set_progress(30.0)
-
-        idi_hex = (auth_result.get("issue_id") or auth_result.get("idi") or "").upper()
-        pmi_hex = (
-            auth_result.get("issue_parameter") or auth_result.get("pmi") or ""
-        ).upper()
-
-        if not idi_hex:
-            raise RuntimeError("サーバ応答に Issue ID が含まれていません。")
-        if not pmi_hex:
-            raise RuntimeError("サーバ応答に Issue Parameter が含まれていません。")
-
-        try:
-            idi_bytes = bytes.fromhex(idi_hex)
-        except ValueError as exc:
-            raise RuntimeError("Issue ID の形式が不正です。") from exc
-
-        system_info = SystemInfo(
-            idi_hex=idi_hex,
-            idi_display=idi_bytes_to_str(idi_bytes),
-            pmi=pmi_hex,
-        )
-
-        reader = RemoteCardReader(client)
-        extractor = SuicaCardDataExtractor(reader, self.station_code_lookup)
-
-        issue_primary = extractor.read_issue_information_primary()
-        self._set_progress(45.0)
-        attribute_info = extractor.read_attribute_information()
-        self._set_progress(55.0)
-        issue_secondary = extractor.read_issue_information_secondary()
-        self._set_progress(65.0)
-        unknown_info = extractor.read_unknown_information()
-        self._set_progress(75.0)
-        transaction_history = extractor.read_transaction_history()
-        self._set_progress(85.0)
-        commuter_info = extractor.read_commuter_pass_information()
-        self._set_progress(92.0)
-        gate_info = extractor.read_gate_in_out_information()
-        self._set_progress(97.0)
-        sf_gate_info = extractor.read_sf_gate_in_information()
-        self._set_progress(100.0)
-
-        return {
-            "system": system_info,
-            "issue_primary": issue_primary,
-            "attribute": attribute_info,
-            "issue_secondary": issue_secondary,
-            "unknown": unknown_info,
-            "transaction_history": transaction_history,
-            "commuter": commuter_info,
-            "gate": gate_info,
-            "sf_gate": sf_gate_info,
-        }
 
     def _format_currency(self, value: Any) -> str:
         return f"{value:,} 円" if isinstance(value, int) else "-"
@@ -1221,12 +1317,12 @@ class SuicaGuiApp:
             display = "-" if value in (None, "") else str(value)
             self.commuter_detail_vars[target_key].set(display)
 
-    def _apply_card_data(self, card_data: dict[str, Any]) -> None:
-        system_info: SystemInfo = card_data["system"]
-        issue_primary = card_data["issue_primary"]
-        issue_secondary = card_data["issue_secondary"]
-        attribute_info = card_data["attribute"]
-        commuter_info = card_data["commuter"]
+    def _apply_card_data(self, card_data: CardData) -> None:
+        system_info = card_data.system
+        issue_primary = card_data.issue_primary
+        issue_secondary = card_data.issue_secondary
+        attribute_info = card_data.attribute
+        commuter_info = card_data.commuter
 
         self._update_summary(
             system_info,
@@ -1240,10 +1336,10 @@ class SuicaGuiApp:
             issue_primary,
             issue_secondary,
             attribute_info,
-            card_data["unknown"],
+            card_data.unknown,
         )
-        self._populate_history(card_data["transaction_history"])
-        self._populate_gate_info(card_data["gate"], card_data["sf_gate"])
+        self._populate_history(card_data.transaction_history)
+        self._populate_gate_info(card_data.gate, card_data.sf_gate)
         self._populate_details(card_data)
         self._finalize_card_update()
 
@@ -1354,14 +1450,11 @@ class SuicaGuiApp:
         self.current_history = history
         self._apply_history_filter()
 
-    def _populate_details(self, card_data: dict[str, Any]) -> None:
-        serializable_data = card_data.copy()
-        serializable_data["system"] = {
-            "idi_hex": card_data["system"].idi_hex,
-            "idi_display": card_data["system"].idi_display,
-            "pmi": card_data["system"].pmi,
-        }
+    def _populate_details(self, card_data: CardData) -> None:
+        if self.details_text is None:
+            return
 
+        serializable_data = card_data.to_serializable_dict()
         text = json.dumps(serializable_data, ensure_ascii=False, indent=2)
         self.details_text.configure(state=tk.NORMAL)
         self.details_text.delete("1.0", tk.END)
