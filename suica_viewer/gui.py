@@ -57,7 +57,7 @@ SUMMARY_VAR_KEYS: tuple[str, ...] = (
     "balance",
     "region",
     "deposit",
-    "initial_amount",
+    "last_topup_amount",
     "issued_at",
     "expires_at",
     "issued_station",
@@ -85,7 +85,7 @@ SF_GATE_VAR_KEYS: tuple[str, ...] = (
 )
 ISSUE_DETAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
-        "発行情報1",
+        "発行情報",
         (
             ("所有者名", "owner_name"),
             ("所有者電話番号", "owner_phone_hex"),
@@ -101,11 +101,11 @@ ISSUE_DETAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ),
     ),
     (
-        "発行情報2",
+        "最終チャージ情報",
         (
-            ("発行機器", "issued_by_detail"),
-            ("発行駅", "issued_station_detail"),
-            ("初期残高", "initial_amount"),
+            ("チャージ機器", "last_topup_equipment"),
+            ("チャージ駅", "last_topup_station"),
+            ("チャージ金額", "last_topup_amount"),
         ),
     ),
     (
@@ -217,7 +217,7 @@ class CardData:
     system: SystemInfo
     issue_primary: dict[str, Any]
     attribute: dict[str, Any]
-    issue_secondary: dict[str, Any]
+    last_topup: dict[str, Any]
     unknown: dict[str, Any]
     transaction_history: list[dict[str, Any]]
     commuter: dict[str, Any]
@@ -233,7 +233,7 @@ class CardData:
             },
             "issue_primary": dict(self.issue_primary),
             "attribute": dict(self.attribute),
-            "issue_secondary": dict(self.issue_secondary),
+            "last_topup": dict(self.last_topup),
             "unknown": dict(self.unknown),
             "transaction_history": [dict(entry) for entry in self.transaction_history],
             "commuter": dict(self.commuter),
@@ -330,20 +330,20 @@ class SuicaCardDataExtractor:
             "transaction_number": transaction_number,
         }
 
-    def read_issue_information_secondary(self) -> dict[str, Any]:
+    def read_last_topup_information(self) -> dict[str, Any]:
         detail_block, *_ = self._read_blocks(3, range(3))
 
-        issued_by_code = detail_block[0]
-        issued_station_line = detail_block[1]
-        issued_station_order = detail_block[2]
-        issued_station = self._format_station(issued_station_line, issued_station_order)
-        initial_amount = int.from_bytes(detail_block[5:7], byteorder="little")
+        equipment_code = detail_block[0]
+        station_line = detail_block[1]
+        station_order = detail_block[2]
+        station = self._format_station(station_line, station_order)
+        amount = int.from_bytes(detail_block[5:7], byteorder="little")
 
         return {
-            "issued_by_code": issued_by_code,
-            "issued_by": equipment_type_to_str(issued_by_code),
-            "issued_station": issued_station,
-            "initial_amount": initial_amount,
+            "equipment_code": equipment_code,
+            "equipment": equipment_type_to_str(equipment_code),
+            "station": station,
+            "amount": amount,
         }
 
     def read_transaction_history(self) -> list[dict[str, Any]]:
@@ -509,7 +509,7 @@ class CardDataService:
         attribute_info = extractor.read_attribute_information()
         self._update_progress(progress_callback, 55.0)
 
-        issue_secondary = extractor.read_issue_information_secondary()
+        last_topup = extractor.read_last_topup_information()
         self._update_progress(progress_callback, 65.0)
 
         unknown_info = extractor.read_unknown_information()
@@ -531,7 +531,7 @@ class CardDataService:
             system=system_info,
             issue_primary=issue_primary,
             attribute=attribute_info,
-            issue_secondary=issue_secondary,
+            last_topup=last_topup,
             unknown=unknown_info,
             transaction_history=transaction_history,
             commuter=commuter_info,
@@ -982,7 +982,7 @@ class SuicaGuiApp:
                 [
                     ("残高", "balance"),
                     ("デポジット", "deposit"),
-                    ("初期残高", "initial_amount"),
+                    ("最終チャージ金額", "last_topup_amount"),
                 ],
             ),
             (
@@ -1050,20 +1050,12 @@ class SuicaGuiApp:
             wraplength=640,
         )
 
-        issue_container = self._create_section(
-            frame,
-            "発行関連情報",
-            padding=(12, 12, 12, 12),
-            margin=(0, 12),
-        )
-
         for section_title, fields in self.issue_detail_sections:
             section_frame = self._create_section(
-                issue_container,
+                frame,
                 section_title,
-                padding=(10, 6, 10, 6),
-                margin=(0, 8),
-                variant="embedded",
+                padding=(12, 8, 12, 8),
+                margin=(0, 12),
             )
             section_frame.columnconfigure(1, weight=1)
             self._populate_label_value_grid(
@@ -1442,10 +1434,11 @@ class SuicaGuiApp:
         self,
         system_info: SystemInfo,
         issue_primary: dict[str, Any],
-        issue_secondary: dict[str, Any],
+        last_topup: dict[str, Any],
         attribute_info: dict[str, Any],
         commuter_info: dict[str, Any],
     ) -> None:
+        topup_info = last_topup or {}
         self.summary_vars["idi"].set(system_info.idi_display)
         self.summary_vars["pmi"].set(system_info.pmi)
         self.summary_vars["owner_name"].set(issue_primary.get("owner_name", "-"))
@@ -1459,8 +1452,8 @@ class SuicaGuiApp:
         self.summary_vars["deposit"].set(
             self._format_currency(issue_primary.get("deposit"))
         )
-        self.summary_vars["initial_amount"].set(
-            self._format_currency(issue_secondary.get("initial_amount"))
+        self.summary_vars["last_topup_amount"].set(
+            self._format_currency(topup_info.get("amount"))
         )
         self.summary_vars["issued_at"].set(issue_primary.get("issued_at", "-"))
         self.summary_vars["expires_at"].set(issue_primary.get("expires_at", "-"))
@@ -1497,21 +1490,21 @@ class SuicaGuiApp:
     def _apply_card_data(self, card_data: CardData) -> None:
         system_info = card_data.system
         issue_primary = card_data.issue_primary
-        issue_secondary = card_data.issue_secondary
+        last_topup = card_data.last_topup
         attribute_info = card_data.attribute
         commuter_info = card_data.commuter
 
         self._update_summary(
             system_info,
             issue_primary,
-            issue_secondary,
+            last_topup,
             attribute_info,
             commuter_info,
         )
         self._update_commuter_details(commuter_info)
         self._populate_issue_details(
             issue_primary,
-            issue_secondary,
+            last_topup,
             attribute_info,
             card_data.unknown,
         )
@@ -1523,10 +1516,11 @@ class SuicaGuiApp:
     def _populate_issue_details(
         self,
         issue_primary: dict[str, Any],
-        issue_secondary: dict[str, Any],
+        last_topup: dict[str, Any],
         attribute_info: dict[str, Any],
         unknown_info: dict[str, Any],
     ) -> None:
+        topup_info = last_topup or {}
         region_display = self._format_region(attribute_info.get("region"))
         attribute_txn_display = self._format_integer(
             attribute_info.get("transaction_number")
@@ -1548,11 +1542,9 @@ class SuicaGuiApp:
             "issued_station": issue_primary.get("issued_station", "-"),
             "issued_at": issue_primary.get("issued_at", "-"),
             "expires_at": issue_primary.get("expires_at", "-"),
-            "issued_by_detail": issue_secondary.get("issued_by", "-"),
-            "issued_station_detail": issue_secondary.get("issued_station", "-"),
-            "initial_amount": self._format_currency(
-                issue_secondary.get("initial_amount")
-            ),
+            "last_topup_equipment": topup_info.get("equipment", "-"),
+            "last_topup_station": topup_info.get("station", "-"),
+            "last_topup_amount": self._format_currency(topup_info.get("amount")),
             "card_type": attribute_info.get("card_type", "-"),
             "region_display": region_display,
             "attribute_transaction_number": attribute_txn_display,

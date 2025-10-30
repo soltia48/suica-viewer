@@ -139,8 +139,8 @@ class SuicaTagReporter:
     def _read_single_block(self, service_code: int, index: int) -> bytes:
         return self._read_blocks(service_code, [index])[0]
 
-    def print_issue_information_primary(self, *, leading_newline: bool = True) -> None:
-        print_section("発行情報1", leading_newline=leading_newline)
+    def print_issue_information(self, *, leading_newline: bool = True) -> None:
+        print_section("発行情報", leading_newline=leading_newline)
         owner_block, personal_block, secondary_idi_block, metadata_block = (
             self._read_blocks(0, range(4))
         )
@@ -208,20 +208,20 @@ class SuicaTagReporter:
         transaction_number = int.from_bytes(block[14:16], byteorder="big")
         print_item("不明な取引通番", transaction_number)
 
-    def print_issue_information_secondary(self) -> None:
-        print_section("発行情報2")
+    def print_last_topup_information(self) -> None:
+        print_section("最終チャージ情報")
         detail_block, *_ = self._read_blocks(3, range(3))
 
-        issued_by = detail_block[0]
-        print_item("発行機器", equipment_type_to_str(issued_by))
+        topup_by = detail_block[0]
+        print_item("チャージ機器", equipment_type_to_str(topup_by))
 
-        issued_station_line = detail_block[1]
-        issued_station_order = detail_block[2]
-        issued_station = self._format_station(issued_station_line, issued_station_order)
-        print_item("発行駅", issued_station)
+        topup_station_line = detail_block[1]
+        topup_station_order = detail_block[2]
+        topup_station = self._format_station(topup_station_line, topup_station_order)
+        print_item("チャージ駅", topup_station)
 
-        initial_amount = int.from_bytes(detail_block[5:7], byteorder="little")
-        print_item("初期残高", f"{initial_amount} 円")
+        topup_amount = int.from_bytes(detail_block[5:7], byteorder="little")
+        print_item("チャージ金額", f"{topup_amount} 円")
 
     def _print_transaction_entry(
         self,
@@ -446,10 +446,10 @@ def on_connect(tag: Tag):
 
     reader = RemoteCardReader(client)
     reporter = SuicaTagReporter(reader, station_code_lookup)
-    reporter.print_issue_information_primary(leading_newline=False)
+    reporter.print_issue_information(leading_newline=False)
     reporter.print_attribute_information()
     reporter.print_unknown_information()
-    reporter.print_issue_information_secondary()
+    reporter.print_last_topup_information()
     reporter.print_transaction_history()
     # reporter.print_unknown_blocks()
     reporter.print_commuter_pass_information()
