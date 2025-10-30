@@ -1692,7 +1692,7 @@ class SuicaGuiApp:
 
     def _finalize_card_update(self) -> None:
         self.last_updated_var.set(f"読取日時: {self._current_local_timestamp()}")
-        self._update_status("カード情報を更新しました。カードを離してください。")
+        self._update_status("カード情報を読み取りました。")
         self._set_progress(100.0)
 
     def _set_progress(self, value: float) -> None:
@@ -1705,7 +1705,7 @@ class SuicaGuiApp:
     def _handle_card_removed(self) -> None:
         self._reset_progress()
         self._update_status("カードをかざしてください。")
-        self.last_updated_var.set("読取り日時: —")
+        self.last_updated_var.set("読取日時: —")
 
         self._reset_string_vars(self.summary_vars)
         self._reset_string_vars(self.card_detail_vars)
