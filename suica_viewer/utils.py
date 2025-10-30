@@ -80,6 +80,12 @@ CARD_TYPE_LABELS: dict[int, str] = {
     3: "ICOCA",
 }
 
+ISSUER_ID_MAP: dict[str, tuple[str, str]] = {
+    "0103": ("東日本旅客鉄道株式会社", "JE"),
+    "0252": ("株式会社パスモ", "PB"),
+    "05D5": ("株式会社ニモカ", "NR"),
+}
+
 GATE_IN_OUT_TYPES: dict[int, str] = {
     0x00: "精算出場",
     0x01: "精算出場(プリペイドカード併用?)",
@@ -206,6 +212,22 @@ def format_station(
     return f"{company} {line} {name}"
 
 
+def issuer_id_to_str(issuer_id_hex: str) -> str:
+    key = issuer_id_hex.upper()
+    info = ISSUER_ID_MAP.get(key)
+    if info is None:
+        return key
+    company, identifier = info
+    return f"{key} ({company} / {identifier})"
+
+
+def issuer_identifier_from_id(issuer_id_hex: str) -> str | None:
+    info = ISSUER_ID_MAP.get(issuer_id_hex.upper())
+    if info is None:
+        return None
+    return info[1]
+
+
 def idi_bytes_to_str(idi_bytes: bytes) -> str:
     """Convert an 8-byte IDi to its string form."""
 
@@ -213,7 +235,13 @@ def idi_bytes_to_str(idi_bytes: bytes) -> str:
         raise ValueError("idi_bytes must be 8 bytes.")
     data = bytes(idi_bytes)
 
-    head = data[0:4].hex().upper()
+    issuer_hex = data[0:2].hex().upper()
+    remainder = data[2:4].hex().upper()
+    issuer_identifier = issuer_identifier_from_id(issuer_hex)
+    if issuer_identifier is not None:
+        head = f"{issuer_identifier}{remainder}"
+    else:
+        head = f"{issuer_hex}{remainder}"
 
     v = (data[4] << 8) | data[5]
     year = (v >> 9) & 0x3F

@@ -26,6 +26,7 @@ from .utils import (
     gate_instruction_type_to_str,
     idi_bytes_to_str,
     intermadiate_gate_instruction_type_to_str,
+    issuer_id_to_str,
     pay_type_to_str,
     transaction_type_to_str,
 )
@@ -52,17 +53,17 @@ DEFAULT_AUTH_SERVER_URL = "https://felica-auth.nyaa.ws"
 SUMMARY_VAR_KEYS: tuple[str, ...] = (
     "idi",
     "pmi",
-    "owner_name",
+    "idm",
+    "pmm",
     "card_type",
     "balance",
-    "region",
-    "deposit",
     "last_topup_amount",
+    "transaction_number",
     "issued_at",
     "expires_at",
     "issued_station",
-    "transaction_number",
     "commuter_pass",
+    "commuter_period",
 )
 COMMUTER_DETAIL_KEYS: tuple[str, ...] = (
     "valid_from",
@@ -83,7 +84,7 @@ SF_GATE_VAR_KEYS: tuple[str, ...] = (
     "unknown_value1",
     "unknown_value2",
 )
-ISSUE_DETAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+CARD_DETAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "発行情報",
         (
@@ -108,15 +109,12 @@ ISSUE_DETAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ("チャージ金額", "last_topup_amount"),
         ),
     ),
-    (
-        "属性情報",
-        (
-            ("カード種別", "card_type"),
-            ("地域", "region_display"),
-            ("残高", "attribute_balance"),
-            ("取引通番", "attribute_transaction_number"),
-        ),
-    ),
+)
+ATTRIBUTE_DETAIL_FIELDS: tuple[tuple[str, str], ...] = (
+    ("カード種別", "card_type"),
+    ("地域", "region_display"),
+    ("残高", "attribute_balance"),
+    ("取引通番", "attribute_transaction_number"),
 )
 MISC_DETAIL_FIELDS: tuple[tuple[str, str], ...] = (
     ("不明な残高", "unknown_balance"),
@@ -197,6 +195,8 @@ class RemoteCardReader:
 
 @dataclass
 class SystemInfo:
+    idm_hex: str
+    pmm_hex: str
     idi_hex: str
     idi_display: str
     pmi: str
@@ -227,6 +227,8 @@ class CardData:
     def to_serializable_dict(self) -> dict[str, Any]:
         return {
             "system": {
+                "idm_hex": self.system.idm_hex,
+                "pmm_hex": self.system.pmm_hex,
                 "idi_hex": self.system.idi_hex,
                 "idi_display": self.system.idi_display,
                 "pmi": self.system.pmi,
@@ -276,7 +278,8 @@ class SuicaCardDataExtractor:
         age_code = personal_block[8:9].hex().upper()
         dob = int.from_bytes(personal_block[9:11], byteorder="big")
         deposit = int.from_bytes(personal_block[12:14], byteorder="little")
-        issuer_id = metadata_block[0:2].hex().upper()
+        issuer_id_hex = metadata_block[0:2].hex().upper()
+        issuer_id = issuer_id_to_str(issuer_id_hex)
         issued_by_code = metadata_block[2]
         issued_by = equipment_type_to_str(issued_by_code)
         issued_station_line = metadata_block[3]
@@ -293,6 +296,7 @@ class SuicaCardDataExtractor:
             "owner_birthdate": format_date(dob),
             "deposit": deposit,
             "issuer_id": issuer_id,
+            "issuer_id_hex": issuer_id_hex,
             "issued_by_code": issued_by_code,
             "issued_by": issued_by,
             "issued_station": issued_station,
@@ -498,7 +502,7 @@ class CardDataService:
         )
         self._update_progress(progress_callback, 30.0)
 
-        system_info = self._build_system_info(auth_result)
+        system_info = self._build_system_info(client, auth_result)
 
         reader = RemoteCardReader(client)
         extractor = SuicaCardDataExtractor(reader, self.station_code_lookup)
@@ -539,7 +543,11 @@ class CardDataService:
             sf_gate=sf_gate_info,
         )
 
-    def _build_system_info(self, auth_result: dict[str, Any]) -> SystemInfo:
+    def _build_system_info(
+        self, client: FelicaRemoteClient, auth_result: dict[str, Any]
+    ) -> SystemInfo:
+        idm_hex = client.idm.hex().upper()
+        pmm_hex = client.pmm.hex().upper()
         idi_hex = (auth_result.get("issue_id") or auth_result.get("idi") or "").upper()
         pmi_hex = (
             auth_result.get("issue_parameter") or auth_result.get("pmi") or ""
@@ -556,6 +564,8 @@ class CardDataService:
             raise RuntimeError("Issue ID の形式が不正です。") from exc
 
         return SystemInfo(
+            idm_hex=idm_hex,
+            pmm_hex=pmm_hex,
             idi_hex=idi_hex,
             idi_display=idi_bytes_to_str(idi_bytes),
             pmi=pmi_hex,
@@ -608,11 +618,14 @@ class SuicaGuiApp:
         self.current_gate_entries: list[dict[str, Any]] = []
         self.sf_gate_vars = self._create_string_vars(SF_GATE_VAR_KEYS)
         self.commuter_detail_vars = self._create_string_vars(COMMUTER_DETAIL_KEYS)
-        self.issue_detail_sections = ISSUE_DETAIL_SECTIONS
-        issue_keys = [
-            key for _, fields in self.issue_detail_sections for _, key in fields
+        self.card_detail_sections = CARD_DETAIL_SECTIONS
+        card_keys = [
+            key for _, fields in self.card_detail_sections for _, key in fields
         ]
-        self.issue_detail_vars = self._create_string_vars(issue_keys)
+        self.card_detail_vars = self._create_string_vars(card_keys)
+        self.attribute_detail_fields = ATTRIBUTE_DETAIL_FIELDS
+        attribute_keys = [key for _, key in self.attribute_detail_fields]
+        self.attribute_detail_vars = self._create_string_vars(attribute_keys)
         self.misc_detail_fields = MISC_DETAIL_FIELDS
         misc_keys = [key for _, key in self.misc_detail_fields]
         self.misc_detail_vars = self._create_string_vars(misc_keys)
@@ -854,27 +867,23 @@ class SuicaGuiApp:
         overview_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
         notebook.add(overview_frame, text="概要")
 
-        issue_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
-        notebook.add(issue_frame, text="発行情報")
+        card_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
+        notebook.add(card_frame, text="カード情報")
 
         history_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
-        notebook.add(history_frame, text="履歴")
+        notebook.add(history_frame, text="取引履歴")
 
         gate_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
         notebook.add(gate_frame, text="改札")
 
-        misc_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
-        notebook.add(misc_frame, text="その他")
-
-        details_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
-        notebook.add(details_frame, text="詳細")
+        data_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
+        notebook.add(data_frame, text="データ")
 
         self._build_overview_tab(overview_frame)
-        self._build_issue_tab(issue_frame)
+        self._build_card_tab(card_frame)
         self._build_history_tab(history_frame)
         self._build_gate_tab(gate_frame)
-        self._build_misc_tab(misc_frame)
-        self._build_details_tab(details_frame)
+        self._build_data_tab(data_frame)
 
     def _populate_label_value_grid(
         self,
@@ -978,29 +987,36 @@ class SuicaGuiApp:
     def _build_overview_tab(self, frame: ttk.Frame) -> None:
         sections = [
             (
-                "残高情報",
-                [
-                    ("残高", "balance"),
-                    ("デポジット", "deposit"),
-                    ("最終チャージ金額", "last_topup_amount"),
-                ],
-            ),
-            (
                 "カード識別",
                 [
+                    ("IDm", "idm"),
+                    ("PMm", "pmm"),
                     ("IDi", "idi"),
                     ("PMi", "pmi"),
                     ("カード種別", "card_type"),
+                ],
+            ),
+            (
+                "利用サマリ",
+                [
+                    ("残高", "balance"),
+                    ("最終チャージ金額", "last_topup_amount"),
                     ("取引通番", "transaction_number"),
                 ],
             ),
             (
-                "その他",
+                "発行・有効情報",
                 [
                     ("発行日", "issued_at"),
                     ("有効期限", "expires_at"),
                     ("発行駅", "issued_station"),
-                    ("定期区間", "commuter_pass"),
+                ],
+            ),
+            (
+                "定期券ハイライト",
+                [
+                    ("区間", "commuter_pass"),
+                    ("有効期間", "commuter_period"),
                 ],
             ),
         ]
@@ -1023,14 +1039,45 @@ class SuicaGuiApp:
                 value_style="SummaryValue.TLabel",
             )
 
-    def _build_issue_tab(self, frame: ttk.Frame) -> None:
-        commuter_frame = self._create_section(
+    def _build_card_tab(self, frame: ttk.Frame) -> None:
+        for section_title, fields in self.card_detail_sections:
+            section_frame = self._create_section(
+                frame,
+                section_title,
+                padding=(12, 8, 12, 8),
+                margin=(0, 12),
+            )
+            section_frame.columnconfigure(1, weight=1)
+            self._populate_label_value_grid(
+                section_frame,
+                fields,
+                self.card_detail_vars,
+                label_width=16,
+                wraplength=660,
+            )
+
+        attribute_section = self._create_section(
             frame,
-            "定期券詳細",
+            "カード属性",
             padding=(12, 8, 12, 8),
             margin=(0, 12),
         )
-        commuter_frame.columnconfigure(1, weight=1)
+        attribute_section.columnconfigure(1, weight=1)
+        self._populate_label_value_grid(
+            attribute_section,
+            self.attribute_detail_fields,
+            self.attribute_detail_vars,
+            label_width=16,
+            wraplength=660,
+        )
+
+        commuter_section = self._create_section(
+            frame,
+            "定期券情報",
+            padding=(12, 8, 12, 8),
+            margin=(0, 12),
+        )
+        commuter_section.columnconfigure(1, weight=1)
 
         commuter_labels = [
             ("開始日", "valid_from"),
@@ -1043,28 +1090,12 @@ class SuicaGuiApp:
         ]
 
         self._populate_label_value_grid(
-            commuter_frame,
+            commuter_section,
             commuter_labels,
             self.commuter_detail_vars,
             label_width=12,
             wraplength=640,
         )
-
-        for section_title, fields in self.issue_detail_sections:
-            section_frame = self._create_section(
-                frame,
-                section_title,
-                padding=(12, 8, 12, 8),
-                margin=(0, 12),
-            )
-            section_frame.columnconfigure(1, weight=1)
-            self._populate_label_value_grid(
-                section_frame,
-                fields,
-                self.issue_detail_vars,
-                label_width=16,
-                wraplength=660,
-            )
 
     def _build_history_tab(self, frame: ttk.Frame) -> None:
         search_frame = ttk.Frame(frame, padding=(0, 0, 0, 8), style="Main.TFrame")
@@ -1168,6 +1199,10 @@ class SuicaGuiApp:
             padx=(0, 8),
             pady=2,
         )
+
+    def _build_data_tab(self, frame: ttk.Frame) -> None:
+        self._build_misc_tab(frame)
+        self._build_details_tab(frame)
 
     def _build_misc_tab(self, frame: ttk.Frame) -> None:
         misc_container = self._create_section(
@@ -1441,16 +1476,11 @@ class SuicaGuiApp:
         topup_info = last_topup or {}
         self.summary_vars["idi"].set(system_info.idi_display)
         self.summary_vars["pmi"].set(system_info.pmi)
-        self.summary_vars["owner_name"].set(issue_primary.get("owner_name", "-"))
+        self.summary_vars["idm"].set(system_info.idm_hex)
+        self.summary_vars["pmm"].set(system_info.pmm_hex)
         self.summary_vars["card_type"].set(attribute_info.get("card_type", "-"))
         self.summary_vars["balance"].set(
             self._format_currency(attribute_info.get("balance"))
-        )
-        self.summary_vars["region"].set(
-            self._format_region(attribute_info.get("region"))
-        )
-        self.summary_vars["deposit"].set(
-            self._format_currency(issue_primary.get("deposit"))
         )
         self.summary_vars["last_topup_amount"].set(
             self._format_currency(topup_info.get("amount"))
@@ -1471,6 +1501,14 @@ class SuicaGuiApp:
         else:
             commuter_summary = "-"
         self.summary_vars["commuter_pass"].set(commuter_summary)
+
+        valid_from = commuter_info.get("valid_from")
+        valid_to = commuter_info.get("valid_to")
+        if valid_from and valid_to:
+            commuter_period = f"{valid_from} 〜 {valid_to}"
+        else:
+            commuter_period = "-"
+        self.summary_vars["commuter_period"].set(commuter_period)
 
     def _update_commuter_details(self, commuter_info: dict[str, Any]) -> None:
         field_mapping = {
@@ -1502,7 +1540,7 @@ class SuicaGuiApp:
             commuter_info,
         )
         self._update_commuter_details(commuter_info)
-        self._populate_issue_details(
+        self._populate_card_details(
             issue_primary,
             last_topup,
             attribute_info,
@@ -1513,7 +1551,7 @@ class SuicaGuiApp:
         self._populate_details(card_data)
         self._finalize_card_update()
 
-    def _populate_issue_details(
+    def _populate_card_details(
         self,
         issue_primary: dict[str, Any],
         last_topup: dict[str, Any],
@@ -1551,9 +1589,12 @@ class SuicaGuiApp:
             "attribute_balance": self._format_currency(attribute_info.get("balance")),
         }
 
-        for _, fields in self.issue_detail_sections:
+        for _, fields in self.card_detail_sections:
             for _, key in fields:
-                self.issue_detail_vars[key].set(detail_values.get(key, "-"))
+                self.card_detail_vars[key].set(detail_values.get(key, "-"))
+
+        for _, key in self.attribute_detail_fields:
+            self.attribute_detail_vars[key].set(detail_values.get(key, "-"))
 
         self.misc_detail_vars["unknown_balance"].set(unknown_balance_display)
         self.misc_detail_vars["unknown_date"].set(unknown_info.get("date", "-"))

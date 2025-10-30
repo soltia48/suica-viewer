@@ -18,6 +18,7 @@ from .utils import (
     gate_instruction_type_to_str,
     idi_bytes_to_str,
     intermadiate_gate_instruction_type_to_str,
+    issuer_id_to_str,
     pay_type_to_str,
     transaction_type_to_str,
 )
@@ -161,8 +162,8 @@ class SuicaTagReporter:
         deposit = int.from_bytes(personal_block[12:14], byteorder="little")
         print_item("デポジット額", f"{deposit} 円")
 
-        issuer_id = metadata_block[0:2]
-        print_item("発行者ID", issuer_id.hex())
+        issuer_id_hex = metadata_block[0:2].hex().upper()
+        print_item("発行者ID", issuer_id_to_str(issuer_id_hex))
 
         issued_by = metadata_block[2]
         print_item("発行機器", equipment_type_to_str(issued_by))
@@ -439,7 +440,9 @@ def on_connect(tag: Tag):
     except ValueError as exc:
         raise RuntimeError("Issue ID is not valid hex.") from exc
 
-    print_section("システム発行情報")
+    print_section("カード識別")
+    print_item("IDm", client.idm.hex().upper())
+    print_item("PMm", client.pmm.hex().upper())
     print_item("IDi", idi_bytes_to_str(idi_bytes))
     print_item("PMi", pmi_hex)
     print()
