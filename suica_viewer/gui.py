@@ -604,7 +604,7 @@ class SuicaGuiApp:
         self.status_var = tk.StringVar(
             master=self.root, value="カードをかざしてください。"
         )
-        self.last_updated_var = tk.StringVar(master=self.root, value="最終更新: —")
+        self.last_updated_var = tk.StringVar(master=self.root, value="読取日時: —")
         self.progress_var = tk.DoubleVar(master=self.root, value=0.0)
         self.summary_vars = self._create_string_vars(SUMMARY_VAR_KEYS)
         self.history_filter_var = tk.StringVar(master=self.root)
@@ -642,6 +642,11 @@ class SuicaGuiApp:
         default: str = "-",
     ) -> dict[str, tk.StringVar]:
         return {key: tk.StringVar(master=self.root, value=default) for key in keys}
+
+    @staticmethod
+    def _reset_string_vars(mapping: dict[str, tk.StringVar], value: str = "-") -> None:
+        for var in mapping.values():
+            var.set(value)
 
     def _load_station_data(self) -> None:
         try:
@@ -891,7 +896,7 @@ class SuicaGuiApp:
         items: Iterable[tuple[str, str]],
         variables: dict[str, tk.StringVar],
         *,
-        label_width: int,
+        label_width: int | None,
         wraplength: int = 900,
         padx: tuple[int, int] = (0, 12),
         pady: int = 4,
@@ -899,13 +904,16 @@ class SuicaGuiApp:
         value_style: str = "SummaryValue.TLabel",
     ) -> None:
         for row, (label_text, key) in enumerate(items):
-            ttk.Label(
-                frame,
-                text=f"{label_text}:",
-                width=label_width,
-                anchor="e",
-                style=label_style,
-            ).grid(row=row, column=0, sticky="e", pady=pady, padx=padx)
+            label_kwargs: dict[str, Any] = {
+                "text": f"{label_text}:",
+                "anchor": "e",
+                "style": label_style,
+            }
+            if label_width is not None:
+                label_kwargs["width"] = label_width
+            ttk.Label(frame, **label_kwargs).grid(
+                row=row, column=0, sticky="e", pady=pady, padx=padx
+            )
             ttk.Label(
                 frame,
                 textvariable=variables[key],
@@ -1033,7 +1041,7 @@ class SuicaGuiApp:
                 section_frame,
                 items,
                 self.summary_vars,
-                label_width=12,
+                label_width=None,
                 wraplength=640,
                 label_style="SummaryKey.TLabel",
                 value_style="SummaryValue.TLabel",
@@ -1401,6 +1409,7 @@ class SuicaGuiApp:
                             rdwr={
                                 "targets": ["212F", "424F"],
                                 "on-connect": self._on_connect,
+                                "on-release": self._on_release,
                             }
                         )
                     except Exception as exc:
@@ -1431,6 +1440,10 @@ class SuicaGuiApp:
             return True
 
         self.root.after(0, self._apply_card_data, card_data)
+        return True
+
+    def _on_release(self, tag: Tag) -> bool:
+        self.root.after(0, self._handle_card_removed)
         return True
 
     def _collect_card_data(self, tag: FelicaStandard) -> CardData:
@@ -1678,7 +1691,7 @@ class SuicaGuiApp:
             self.export_details_button.configure(state=tk.NORMAL)
 
     def _finalize_card_update(self) -> None:
-        self.last_updated_var.set(f"最終更新: {self._current_local_timestamp()}")
+        self.last_updated_var.set(f"読取日時: {self._current_local_timestamp()}")
         self._update_status("カード情報を更新しました。カードを離してください。")
         self._set_progress(100.0)
 
@@ -1688,6 +1701,42 @@ class SuicaGuiApp:
 
     def _reset_progress(self) -> None:
         self._set_progress(0.0)
+
+    def _handle_card_removed(self) -> None:
+        self._reset_progress()
+        self._update_status("カードをかざしてください。")
+        self.last_updated_var.set("読取り日時: —")
+
+        self._reset_string_vars(self.summary_vars)
+        self._reset_string_vars(self.card_detail_vars)
+        self._reset_string_vars(self.attribute_detail_vars)
+        self._reset_string_vars(self.commuter_detail_vars)
+        self._reset_string_vars(self.misc_detail_vars)
+        self._reset_string_vars(self.sf_gate_vars)
+
+        self.current_history = []
+        self.history_filter_var.set("")
+        if self.history_tree is not None:
+            self.history_tree.delete(*self.history_tree.get_children())
+
+        self.current_gate_entries = []
+        if self.gate_tree is not None:
+            self.gate_tree.delete(*self.gate_tree.get_children())
+
+        if self.details_text is not None:
+            self.details_text.configure(state=tk.NORMAL)
+            self.details_text.delete("1.0", tk.END)
+            self.details_text.configure(state=tk.DISABLED)
+        self.current_card_json = ""
+
+        if self.copy_details_button is not None:
+            self.copy_details_button.configure(state=tk.DISABLED)
+        if self.export_details_button is not None:
+            self.export_details_button.configure(state=tk.DISABLED)
+
+        if self._remote_client is not None:
+            self._remote_client.close()
+            self._remote_client = None
 
     def _update_status(self, message: str) -> None:
         self.root.after(0, self.status_var.set, message)
