@@ -54,13 +54,24 @@ class _KeepAliveHTTPClient:
         ).rstrip("/")
         if not self._base_url_for_log:
             self._base_url_for_log = f"{parsed.scheme}://{parsed.netloc}"
+        self._default_headers = {
+            "Content-Type": "application/json",
+            "Connection": "keep-alive",
+        }
 
     def close(self) -> None:
         if self._connection is not None:
             self._connection.close()
             self._connection = None
 
-    def post(self, path: str, payload: dict[str, Any], timeout: float) -> bytes:
+    def post(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        timeout: float,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> bytes:
         if not path.startswith("/"):
             raise ValueError("Request path must start with '/'.")
         body = _to_json_bytes(payload)
@@ -71,15 +82,16 @@ class _KeepAliveHTTPClient:
             list(payload.keys()),
         )
         request_path = f"{self._path_prefix}{path}" if self._path_prefix else path
-        headers = {
-            "Content-Type": "application/json",
-            "Connection": "keep-alive",
-        }
+        request_headers = self._default_headers.copy()
+        if headers:
+            request_headers.update(headers)
         last_error: Exception | None = None
         for attempt in range(2):
             connection = self._ensure_connection(timeout)
             try:
-                connection.request("POST", request_path, body=body, headers=headers)
+                connection.request(
+                    "POST", request_path, body=body, headers=request_headers
+                )
                 response = connection.getresponse()
                 data = response.read()
             except (http.client.HTTPException, OSError, socket.timeout) as exc:
@@ -128,6 +140,13 @@ class _CommandEnvelope:
     timeout: float | None
 
 
+def _normalize_bearer_token(token: str | None) -> str | None:
+    if token is None:
+        return None
+    stripped = token.strip()
+    return stripped or None
+
+
 class FelicaRemoteClient:
     """Coordinate card I/O with the remote crypto server."""
 
@@ -137,6 +156,7 @@ class FelicaRemoteClient:
         tag: FelicaStandard,
         *,
         session_id: str | None = None,
+        bearer_token: str | None = None,
         http_timeout: float = 10.0,
         default_exchange_timeout: float = 1.0,
     ) -> None:
@@ -144,6 +164,7 @@ class FelicaRemoteClient:
         self.server_url = trimmed_url
         self.tag = tag
         self.session_id = session_id
+        self._bearer_token = _normalize_bearer_token(bearer_token)
         self.http_timeout = http_timeout
         self.default_exchange_timeout = default_exchange_timeout
         self.authenticated = False
@@ -246,11 +267,17 @@ class FelicaRemoteClient:
         self,
         tag: FelicaStandard,
         session_id: str | None = None,
+        bearer_token: str | None = None,
     ) -> None:
         """Reuse the same transport for a new tag/session."""
         self.tag = tag
         self.session_id = session_id
         self.authenticated = False
+        self._bearer_token = _normalize_bearer_token(bearer_token)
+
+    def set_bearer_token(self, bearer_token: str | None) -> None:
+        """Update the bearer token used for Authorization headers."""
+        self._bearer_token = _normalize_bearer_token(bearer_token)
 
     def _exchange_with_card(self, command: _CommandEnvelope) -> bytes:
         timeout = (
@@ -286,8 +313,18 @@ class FelicaRemoteClient:
         if session_id:
             self.session_id = session_id
 
+    def _auth_headers(self) -> dict[str, str]:
+        if not self._bearer_token:
+            return {}
+        return {"Authorization": f"Bearer {self._bearer_token}"}
+
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        data = self._http_client.post(path, payload, self.http_timeout)
+        data = self._http_client.post(
+            path,
+            payload,
+            self.http_timeout,
+            headers=self._auth_headers(),
+        )
         try:
             decoded = json.loads(data.decode("utf-8") or "{}")
         except json.JSONDecodeError as exc:

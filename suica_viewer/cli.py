@@ -41,6 +41,7 @@ READ_COMMAND_CODE = 0x14
 DATA_BLOCK_SIZE = 16
 MAX_BLOCKS_PER_REQUEST = 12
 DEFAULT_AUTH_SERVER_URL = "https://felica-auth.nyaa.ws"
+AUTH_TOKEN_ENV_VAR = "AUTH_SERVER_TOKEN"
 
 
 class RemoteCardReader:
@@ -107,6 +108,11 @@ class RemoteCardReader:
 def resolve_server_url() -> str:
     value = os.environ.get("AUTH_SERVER_URL", "").strip()
     return value or DEFAULT_AUTH_SERVER_URL
+
+
+def resolve_auth_token() -> str | None:
+    value = os.environ.get(AUTH_TOKEN_ENV_VAR, "").strip()
+    return value or None
 
 
 def print_section(title: str, *, leading_newline: bool = True) -> None:
@@ -415,7 +421,11 @@ def on_connect(tag: Tag):
         raise RuntimeError("Polling 応答が不正です。")
     tag.idm, tag.pmm = polling_result
 
-    client = FelicaRemoteClient(resolve_server_url(), tag)
+    client = FelicaRemoteClient(
+        resolve_server_url(),
+        tag,
+        bearer_token=resolve_auth_token(),
+    )
     try:
         auth_result = client.mutual_authentication(
             SYSTEM_CODE,

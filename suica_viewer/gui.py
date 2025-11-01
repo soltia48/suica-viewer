@@ -49,6 +49,7 @@ READ_COMMAND_CODE = 0x14
 DATA_BLOCK_SIZE = 16
 MAX_BLOCKS_PER_REQUEST = 12
 DEFAULT_AUTH_SERVER_URL = "https://felica-auth.nyaa.ws"
+AUTH_TOKEN_ENV_VAR = "AUTH_SERVER_TOKEN"
 
 SUMMARY_VAR_KEYS: tuple[str, ...] = (
     "idi",
@@ -629,11 +630,15 @@ class SuicaGuiApp:
         self.misc_detail_fields = MISC_DETAIL_FIELDS
         misc_keys = [key for _, key in self.misc_detail_fields]
         self.misc_detail_vars = self._create_string_vars(misc_keys)
+        initial_token = self._get_env_auth_token() or ""
+        self.auth_token_var = tk.StringVar(master=self.root, value=initial_token)
+        self.clear_on_remove_var = tk.BooleanVar(master=self.root, value=True)
         self.server_url = self._resolve_server_url()
         self._remote_client: FelicaRemoteClient | None = None
         self.card_data_service: CardDataService | None = None
         self.progress_bar: ttk.Progressbar | None = None
         self.details_text: tk.Text | None = None
+        self.auth_token_var.trace_add("write", self._on_auth_token_changed)
 
     def _create_string_vars(
         self,
@@ -665,15 +670,31 @@ class SuicaGuiApp:
         self.root.bind("<Command-f>", self._focus_history_filter)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    @staticmethod
+    def _get_env_auth_token() -> str | None:
+        value = os.environ.get(AUTH_TOKEN_ENV_VAR, "").strip()
+        return value or None
+
     def _resolve_server_url(self) -> str:
         value = os.environ.get("AUTH_SERVER_URL", "").strip()
         return value or DEFAULT_AUTH_SERVER_URL
 
+    def _resolve_auth_token(self) -> str | None:
+        token = self.auth_token_var.get().strip()
+        return token or None
+
     def _get_remote_client(self, tag: FelicaStandard) -> FelicaRemoteClient:
         if self._remote_client is None:
-            self._remote_client = FelicaRemoteClient(self.server_url, tag)
+            self._remote_client = FelicaRemoteClient(
+                self.server_url,
+                tag,
+                bearer_token=self._resolve_auth_token(),
+            )
         else:
-            self._remote_client.reset(tag)
+            self._remote_client.reset(
+                tag,
+                bearer_token=self._resolve_auth_token(),
+            )
         return self._remote_client
 
     def _start_nfc_thread(self) -> None:
@@ -884,11 +905,15 @@ class SuicaGuiApp:
         data_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
         notebook.add(data_frame, text="データ")
 
+        settings_frame = ttk.Frame(notebook, padding=16, style="Main.TFrame")
+        notebook.add(settings_frame, text="設定")
+
         self._build_overview_tab(overview_frame)
         self._build_card_tab(card_frame)
         self._build_history_tab(history_frame)
         self._build_gate_tab(gate_frame)
         self._build_data_tab(data_frame)
+        self._build_settings_tab(settings_frame)
 
     def _populate_label_value_grid(
         self,
@@ -1283,6 +1308,75 @@ class SuicaGuiApp:
         self.details_text.grid(row=0, column=0, sticky="nsew")
         y_scroll.grid(row=0, column=1, sticky="ns")
         x_scroll.grid(row=1, column=0, sticky="ew")
+
+    def _build_settings_tab(self, frame: ttk.Frame) -> None:
+        auth_section = self._create_section(
+            frame,
+            "リモート認証",
+            padding=(12, 12, 12, 12),
+            margin=(0, 12),
+        )
+        auth_section.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            auth_section,
+            text="Bearer トークン",
+            style="SummaryKey.TLabel",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+
+        token_entry = ttk.Entry(
+            auth_section,
+            textvariable=self.auth_token_var,
+            show="*",
+        )
+        token_entry.grid(row=0, column=1, sticky="ew")
+
+        ttk.Button(
+            auth_section,
+            text="クリア",
+            command=self._clear_auth_token_entry,
+        ).grid(row=0, column=2, sticky="e", padx=(12, 0))
+
+        ttk.Label(
+            auth_section,
+            text="環境変数 AUTH_SERVER_TOKEN の値で初期化され、入力内容は即時に適用されます。空欄にするとトークン送信を無効化します。",
+            style="SectionMeta.TLabel",
+            wraplength=640,
+            justify=tk.LEFT,
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(12, 0))
+
+        token_entry.configure(width=48)
+
+        behavior_section = self._create_section(
+            frame,
+            "表示設定",
+            padding=(12, 12, 12, 12),
+            margin=(0, 12),
+        )
+        behavior_section.columnconfigure(0, weight=1)
+
+        ttk.Checkbutton(
+            behavior_section,
+            text="カードをリーダーから離したら表示をクリアする",
+            variable=self.clear_on_remove_var,
+        ).grid(row=0, column=0, sticky="w")
+
+        ttk.Label(
+            behavior_section,
+            text="チェックを外すと、カードを離したあとも最終読取内容が残ります。",
+            style="SectionMeta.TLabel",
+            wraplength=640,
+            justify=tk.LEFT,
+        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+    def _on_auth_token_changed(self, *_: Any) -> None:
+        token = self.auth_token_var.get().strip()
+        if self._remote_client is not None:
+            self._remote_client.set_bearer_token(token or None)
+
+    def _clear_auth_token_entry(self) -> None:
+        if self.auth_token_var.get():
+            self.auth_token_var.set("")
 
     def _copy_details_to_clipboard(self) -> None:
         if not self.current_card_json:
@@ -1703,8 +1797,16 @@ class SuicaGuiApp:
         self._set_progress(0.0)
 
     def _handle_card_removed(self) -> None:
+        if self._remote_client is not None:
+            self._remote_client.close()
+            self._remote_client = None
+
         self._reset_progress()
         self._update_status("カードをかざしてください。")
+
+        if not self.clear_on_remove_var.get():
+            return
+
         self.last_updated_var.set("読取日時: —")
 
         self._reset_string_vars(self.summary_vars)
@@ -1733,10 +1835,6 @@ class SuicaGuiApp:
             self.copy_details_button.configure(state=tk.DISABLED)
         if self.export_details_button is not None:
             self.export_details_button.configure(state=tk.DISABLED)
-
-        if self._remote_client is not None:
-            self._remote_client.close()
-            self._remote_client = None
 
     def _update_status(self, message: str) -> None:
         self.root.after(0, self.status_var.set, message)
