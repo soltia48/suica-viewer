@@ -18,7 +18,7 @@ packages = [
 [tool.poetry]
 
 [tool.poetry.group.dev.dependencies]
-black = "^25.1.0"
+black = "^26.3.1"
 
 [tool.poetry.scripts]
 suica-viewer = "suica_viewer.cli:main"
