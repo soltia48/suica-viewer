@@ -4,6 +4,7 @@ use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 
 use clap::Parser;
+use suica_viewer::card::SharedDriver;
 use suica_viewer::card_data::{CardData, GateEntry, PaidTicketEntry, TransactionEntry};
 use suica_viewer::utils::{format_region, format_yen, thousands};
 use suica_viewer::{
@@ -553,7 +554,7 @@ fn run(args: &Args) -> Result<(), String> {
 
     let mut card_reader =
         reader::open().map_err(|error| format!("NFC リーダーを初期化できません: {error}"))?;
-    let driver = card_reader.driver_mut();
+    let mut driver = SharedDriver::new(card_reader.driver_mut());
 
     if !args.json {
         eprintln!("カードをかざしてください。");
@@ -562,7 +563,7 @@ fn run(args: &Args) -> Result<(), String> {
 
     // Poll until a card shows up; an idle reader is not an error.
     let mut card = loop {
-        match CardSession::poll(driver, SYSTEM_CODE) {
+        match CardSession::poll(&mut driver, SYSTEM_CODE) {
             Ok(Some(card)) => break card,
             Ok(None) => std::thread::sleep(reader::POLL_INTERVAL),
             Err(error) => return Err(format!("カードのポーリングに失敗しました: {error}")),

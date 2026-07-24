@@ -20,6 +20,7 @@ use clap::Parser;
 use futures_util::{Stream, StreamExt};
 use serde::Serialize;
 use serde_json::json;
+use suica_viewer::card::SharedDriver;
 use suica_viewer::card_data::CardData;
 use suica_viewer::{
     AuthClient, CardDataService, CardSession, SYSTEM_CODE, StationCodeLookup, reader,
@@ -229,11 +230,11 @@ fn run_reader(hub: Arc<ReaderHub>, service: CardDataService, server_url: String)
         }
     };
 
-    let driver = card_reader.driver_mut();
+    let mut driver = SharedDriver::new(card_reader.driver_mut());
     hub.publish(Event::status("waiting", "カードをかざしてください。"));
 
     while !hub.is_stopped() {
-        let mut card = match CardSession::poll(driver, SYSTEM_CODE) {
+        let mut card = match CardSession::poll(&mut driver, SYSTEM_CODE) {
             Ok(Some(card)) => card,
             Ok(None) => {
                 std::thread::sleep(reader::POLL_INTERVAL);
@@ -274,7 +275,7 @@ fn run_reader(hub: Arc<ReaderHub>, service: CardDataService, server_url: String)
 ///
 /// Without this the loop would immediately re-read the card still sitting on
 /// the reader, so a single tap would replay forever.
-fn wait_for_removal(hub: &ReaderHub, card: &mut CardSession<'_>) {
+fn wait_for_removal(hub: &ReaderHub, card: &mut CardSession<'_, '_>) {
     let mut misses = 0;
     while !hub.is_stopped() {
         if card.is_present() {

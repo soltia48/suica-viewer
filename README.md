@@ -93,7 +93,7 @@ Main output sections
 - Attribute info (card type, balance, transaction counter)
 - Transaction history, decoded per entry (gate entry/exit, purchases, top-ups) with the per-transaction balance change
 - Commuter pass info, gate entry/exit records, SF gate entry records
-- Paid-ticket / express-gate records (service `0x1848`) — probed and read only when the card carries it. Cards without it, or servers without the matching key, are skipped without affecting anything else.
+- Paid-ticket / express-gate records (service `0x184B`) — probed and read only when the card carries it. Cards without it, or servers without the matching key, are skipped without affecting anything else.
 
 ## Usage (Web GUI)
 A browser can neither reach a USB reader nor relay the mutual authentication, so `suica-viewer-web` runs a local server that owns the reader and streams card data to the page over Server-Sent Events.
@@ -119,10 +119,31 @@ Options
 ## Authentication Server
 - Default: `https://felica-auth.nyaa.ws`
 - Set the `AUTH_SERVER_URL` environment variable to a base URL to switch servers (no trailing slash needed).
-- The server must expose:
-  - `POST /mutual-authentication`
-  - `POST /encryption-exchange`
-- Intermediate authentication steps round-trip commands and responses with the card. Personal data and card identifiers may be transmitted, so only connect to servers you trust.
+- The server must expose `POST /mutual-authentication`.
+
+### What is sent where
+The server takes part in the **mutual authentication only**. During it, command frames the server builds are relayed to the card and the card's replies are sent back, so the IDm, PMm, and the card's authentication responses do reach the server.
+
+Once authentication succeeds the server returns the ephemeral session material (DES session key, transaction ID, transaction counter) and discards the session. Every encrypted Read after that runs **directly between this process and the card**, so **balance, history, name, and the rest of the card's contents never reach the server**. The long-term keys, correspondingly, never leave it.
+
+Card identifiers are still transmitted, so only connect to servers you trust.
+
+### Which nodes are authenticated
+The viewer only reads, so it authenticates the **read-only code** of each service rather than the read/write code that exposes the same data. The session key it receives therefore cannot modify the card, and an auth server running with `--read-only-nodes` authenticates the request as-is.
+
+| Service | Data | Key |
+| --- | --- | --- |
+| `0x004A` | Issuance info | required |
+| `0x0816` | Misc (purpose unconfirmed) | required |
+| `0x08CA` | Last top-up | required |
+| `0x104A` | Commuter pass | required |
+| `0x008B` | Attributes / balance | not required |
+| `0x090F` | Transaction history | not required |
+| `0x108F` | Gate entry/exit | not required |
+| `0x10CB` | SF gate entry | not required |
+| `0x184B` | Paid ticket (when present) | not required |
+
+FeliCa requires every key-requiring node to be listed before any key-free one, which is why the list is ordered this way. The server must hold keys for these read-only codes, not only for their read/write counterparts.
 
 ## Station Code Data
 - `assets/station_codes.csv` holds station codes for JR East and other operators, resolving company, line, and station names from a line code and station order code.

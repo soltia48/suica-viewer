@@ -5,10 +5,11 @@
 //! stable.
 
 use encoding_rs::SHIFT_JIS;
+use felica_rs::FelicaStandardError;
 use serde::{Deserialize, Serialize};
 
 use crate::auth_client::{AuthClient, AuthError};
-use crate::card::CardSession;
+use crate::card::{CardError, CardSession};
 use crate::station_codes::StationCodeLookup;
 use crate::utils::{
     SYSTEM_CODE, card_type_label, equipment_type_to_str, format_birth_date, format_date,
@@ -18,20 +19,56 @@ use crate::utils::{
 };
 
 /// Area nodes covered by the authentication.
+///
+/// Areas take part in the key derivation without widening data access, so the
+/// list is the same whichever service variant is authenticated.
 pub const AREA_NODE_IDS: [u16; 5] = [0x0000, 0x0040, 0x0800, 0x0FC0, 0x1000];
 
-/// Service nodes every transit card carries.
-pub const SERVICE_NODE_IDS: [u16; 9] = [
-    0x0048, 0x0088, 0x0810, 0x08C8, 0x090C, 0x1008, 0x1048, 0x108C, 0x10C8,
+/// Services authenticated for a read, as the read-only variant of each.
+///
+/// A viewer never writes, and every one of these services is also published
+/// under a read/write code that would authenticate just as well. Naming the
+/// read-only code instead means the session key this earns cannot modify the
+/// card — the card refuses a Write on a read-only service — and it is what lets
+/// an auth server running in read-only mode authenticate the request at all.
+///
+/// The order is not cosmetic: FeliCa requires every key-requiring node to be
+/// listed before any key-free one, so the four keyed services come first.
+/// Address a service by the `*_SERVICE` index below rather than by position.
+pub const SERVICE_NODE_IDS: [u16; 8] = [
+    // Key-requiring (Random/Purse read-only with key).
+    0x004A, // 発行情報
+    0x0816, // その他（用途未確定）
+    0x08CA, // 最終チャージ情報
+    0x104A, // 定期情報
+    // Key-free (Random/Cyclic read-only without key).
+    0x008B, // 属性情報
+    0x090F, // 取引履歴
+    0x108F, // 改札入出場情報
+    0x10CB, // SF改札入場情報
 ];
 
-/// Paid-ticket / express-gate service (料金発券・改札情報). Not present on every
-/// card, and reading it needs its own key, so it is probed and authenticated
-/// only when the card actually carries it.
-pub const PAID_TICKET_SERVICE_NODE_ID: u16 = 0x1848;
+/// Where each service sits in [`SERVICE_NODE_IDS`]. A block read addresses a
+/// service by its index in the authenticated list, not by its code.
+const ISSUE_SERVICE: u8 = 0;
+const MISC_SERVICE: u8 = 1;
+const TOPUP_SERVICE: u8 = 2;
+const COMMUTER_SERVICE: u8 = 3;
+const ATTRIBUTE_SERVICE: u8 = 4;
+const HISTORY_SERVICE: u8 = 5;
+const GATE_SERVICE: u8 = 6;
+const SF_GATE_SERVICE: u8 = 7;
 
-const READ_COMMAND_CODE: u8 = 0x14;
+/// Paid-ticket / express-gate service (料金発券・改札情報), read-only variant.
+/// Not present on every card, so it is probed and appended to the authenticated
+/// list only when the card actually carries it. Being key-free, it appends
+/// after the key-free services above and keeps the required ordering.
+pub const PAID_TICKET_SERVICE_NODE_ID: u16 = 0x184B;
+
 const DATA_BLOCK_SIZE: usize = 16;
+
+/// Blocks per encrypted Read. Cards cap how many a single secure command may
+/// carry, and this is the size the protocol has always been driven at here.
 const MAX_BLOCKS_PER_REQUEST: usize = 9;
 
 /// Purchase (物販) transactions store a clock instead of entry/exit stations.
@@ -225,65 +262,45 @@ impl CardData {
 // --------------------------------------------------------------------------- //
 
 /// Issues Read commands through the auth server and returns plain blocks.
-struct RemoteBlockReader<'client, 'card, 'driver> {
-    client: &'client mut AuthClient,
-    card: &'card mut CardSession<'driver>,
-}
+/// Reads blocks straight off the card over the established secure session.
+///
+/// The auth server is no longer in this path — it handed over the session
+/// material and forgot the session — so the card data stays between this
+/// process and the card.
+fn read_blocks(
+    card: &mut CardSession<'_, '_>,
+    service_index: u8,
+    count: usize,
+) -> Result<Vec<Block>> {
+    let mut blocks = Vec::with_capacity(count);
+    // A card caps how many blocks one encrypted Read may carry, so long reads
+    // are split into requests it will accept.
+    for chunk_start in (0..count).step_by(MAX_BLOCKS_PER_REQUEST) {
+        let chunk_end = (chunk_start + MAX_BLOCKS_PER_REQUEST).min(count);
+        let chunk = card
+            .read_blocks_from(service_index, chunk_start, chunk_end - chunk_start)
+            .map_err(|error| CardDataError::decode(describe_read_failure(&error)))?;
 
-impl RemoteBlockReader<'_, '_, '_> {
-    /// Reads `count` consecutive blocks starting at 0 from `service_index`.
-    fn read_blocks(&mut self, service_index: u8, count: usize) -> Result<Vec<Block>> {
-        let mut blocks = Vec::with_capacity(count);
-        for chunk_start in (0..count).step_by(MAX_BLOCKS_PER_REQUEST) {
-            let chunk_end = (chunk_start + MAX_BLOCKS_PER_REQUEST).min(count);
-            let elements: Vec<u8> = (chunk_start..chunk_end)
-                .flat_map(|block| [0x80 | service_index, block as u8])
-                .collect();
-            blocks.extend(self.read_elements(chunk_end - chunk_start, &elements)?);
-        }
-        Ok(blocks)
-    }
-
-    fn read_elements(&mut self, expected: usize, elements: &[u8]) -> Result<Vec<Block>> {
-        let mut payload = Vec::with_capacity(elements.len() + 1);
-        payload.push(expected as u8);
-        payload.extend_from_slice(elements);
-
-        let response = self
-            .client
-            .encryption_exchange(self.card, READ_COMMAND_CODE, &payload)?;
-
-        if response.len() < 3 {
-            return Err(CardDataError::decode(
-                "リモートサーバーからの応答が不正です。",
-            ));
-        }
-        let (status1, status2) = (response[0], response[1]);
-        if status1 != 0x00 {
-            let status = (u16::from(status1) << 8) | u16::from(status2);
-            return Err(CardDataError::decode(format!(
-                "カードがエラーを返しました: 0x{status:04X}"
-            )));
-        }
-        if usize::from(response[2]) != expected {
+        if chunk.len() != chunk_end - chunk_start {
             return Err(CardDataError::decode("取得したブロック数が一致しません。"));
         }
-
-        let data = &response[3..];
-        if data.len() < expected * DATA_BLOCK_SIZE {
-            return Err(CardDataError::decode("ブロックデータの長さが不正です。"));
-        }
-
-        Ok(data
-            .chunks_exact(DATA_BLOCK_SIZE)
-            .take(expected)
-            .map(|chunk| {
-                let mut block = [0u8; DATA_BLOCK_SIZE];
-                block.copy_from_slice(chunk);
-                block
-            })
-            .collect())
+        blocks.extend(chunk);
     }
+    Ok(blocks)
+}
+
+/// Renders a read failure, naming the card's status flags when it set them.
+fn describe_read_failure(error: &CardError) -> String {
+    if let CardError::Protocol(FelicaStandardError::Status {
+        status_flag1,
+        status_flag2,
+        ..
+    }) = error
+    {
+        let status = (u16::from(*status_flag1) << 8) | u16::from(*status_flag2);
+        return format!("カードがエラーを返しました: 0x{status:04X}");
+    }
+    error.to_string()
 }
 
 // --------------------------------------------------------------------------- //
@@ -560,10 +577,14 @@ impl CardDataService {
     }
 
     /// Reads one card end to end.
+    ///
+    /// The auth server takes part only in the mutual authentication. Once it
+    /// returns the session material every block below is read directly from the
+    /// card, so none of the card's contents crosses the network.
     pub fn collect(
         &self,
         client: &mut AuthClient,
-        card: &mut CardSession<'_>,
+        card: &mut CardSession<'_, '_>,
         mut progress: Option<ProgressCallback<'_>>,
     ) -> Result<CardData> {
         let mut report = |value: f32| {
@@ -597,7 +618,7 @@ impl CardDataService {
                         "料金発券サービスの認証に失敗しました（サーバに鍵が無い可能性）。"
                             .to_string(),
                     );
-                    card.repoll(SYSTEM_CODE).map_err(AuthError::from)?;
+                    card.reset(SYSTEM_CODE).map_err(AuthError::from)?;
                     client.reset();
                     client.mutual_authentication(
                         card,
@@ -608,6 +629,10 @@ impl CardDataService {
                 }
                 Err(error) => return Err(error.into()),
             };
+
+        // Adopt the session the server established; from here the card is read
+        // locally and the server is out of the picture.
+        card.begin_secure_session(&auth_result.session);
         report(30.0);
 
         let system = SystemInfo {
@@ -624,36 +649,36 @@ impl CardDataService {
         let decoder = Decoder {
             stations: &self.stations,
         };
-        let mut reader = RemoteBlockReader { client, card };
 
-        let issue_primary = decoder.issue_primary(&reader.read_blocks(0, 4)?)?;
+        let issue_primary = decoder.issue_primary(&read_blocks(card, ISSUE_SERVICE, 4)?)?;
         report(45.0);
 
-        let attribute = decoder.attribute(&reader.read_blocks(1, 1)?)?;
+        let attribute = decoder.attribute(&read_blocks(card, ATTRIBUTE_SERVICE, 1)?)?;
         report(55.0);
 
-        let last_topup = decoder.last_topup(&reader.read_blocks(3, 3)?)?;
+        let last_topup = decoder.last_topup(&read_blocks(card, TOPUP_SERVICE, 3)?)?;
         report(65.0);
 
-        let unknown = decoder.unknown(&reader.read_blocks(2, 1)?)?;
+        let unknown = decoder.unknown(&read_blocks(card, MISC_SERVICE, 1)?)?;
         report(75.0);
 
-        let transaction_history = decoder.transaction_history(&reader.read_blocks(4, 20)?);
+        let transaction_history =
+            decoder.transaction_history(&read_blocks(card, HISTORY_SERVICE, 20)?);
         report(85.0);
 
-        let commuter = decoder.commuter(&reader.read_blocks(6, 3)?)?;
+        let commuter = decoder.commuter(&read_blocks(card, COMMUTER_SERVICE, 3)?)?;
         report(92.0);
 
-        let gate = decoder.gate(&reader.read_blocks(7, 3)?);
+        let gate = decoder.gate(&read_blocks(card, GATE_SERVICE, 3)?);
         report(97.0);
 
-        let sf_gate = decoder.sf_gate(&reader.read_blocks(8, 2)?)?;
+        let sf_gate = decoder.sf_gate(&read_blocks(card, SF_GATE_SERVICE, 2)?)?;
         report(97.0);
 
         let mut paid_ticket = Vec::new();
         let mut paid_ticket_available = false;
         if let Some(service_index) = paid_index {
-            match reader.read_blocks(service_index, 2) {
+            match read_blocks(card, service_index, 2) {
                 Ok(blocks) => {
                     paid_ticket = decoder.paid_ticket(&blocks);
                     paid_ticket_available = true;
@@ -684,8 +709,8 @@ impl CardDataService {
 }
 
 /// Checks, without the server, whether the card carries the paid-ticket service.
-fn probe_paid_ticket(card: &mut CardSession<'_>) -> (bool, Option<String>) {
-    match card.has_service(PAID_TICKET_SERVICE_NODE_ID, SYSTEM_CODE) {
+fn probe_paid_ticket(card: &mut CardSession<'_, '_>) -> (bool, Option<String>) {
+    match card.has_service(PAID_TICKET_SERVICE_NODE_ID) {
         Ok(true) => (true, None),
         Ok(false) => (
             false,
@@ -710,6 +735,76 @@ mod tests {
         let mut block = [0u8; DATA_BLOCK_SIZE];
         block[..bytes.len()].copy_from_slice(bytes);
         block
+    }
+
+    #[test]
+    fn every_authenticated_service_is_read_only() {
+        use felica_rs::felica_standard::ServiceCode;
+
+        // Read-only service attributes, per the FeliCa service definition. A
+        // read/write code here would earn a session key that could modify the
+        // card, and an auth server in read-only mode would refuse it outright.
+        const READ_ONLY: [u8; 6] = [0b001010, 0b001011, 0b001110, 0b001111, 0b010110, 0b010111];
+
+        for node in authenticated_nodes() {
+            let attributes = ServiceCode::new(node).attributes();
+            assert!(
+                READ_ONLY.contains(&attributes),
+                "0x{node:04X} is not a read-only service (attributes {attributes:06b})"
+            );
+        }
+    }
+
+    #[test]
+    fn the_service_list_is_ordered_the_way_the_card_requires() {
+        use felica_rs::felica_standard::ServiceCode;
+
+        // A FeliCa service list must name at least one key-requiring node, and
+        // every key-requiring node has to precede the key-free ones.
+        let mut seen_key_free = false;
+        let mut keyed = 0;
+        for node in authenticated_nodes() {
+            if ServiceCode::new(node).requires_key() {
+                assert!(
+                    !seen_key_free,
+                    "0x{node:04X} requires a key and must be listed before key-free services"
+                );
+                keyed += 1;
+            } else {
+                seen_key_free = true;
+            }
+        }
+        assert!(keyed > 0, "no node in the list requires a key");
+    }
+
+    #[test]
+    fn each_named_service_index_addresses_its_own_service() {
+        // The indices are what block reads travel on, so a reordering of the
+        // list that forgot to move them would read the wrong service.
+        for (index, expected) in [
+            (ISSUE_SERVICE, 0x004A),
+            (MISC_SERVICE, 0x0816),
+            (TOPUP_SERVICE, 0x08CA),
+            (COMMUTER_SERVICE, 0x104A),
+            (ATTRIBUTE_SERVICE, 0x008B),
+            (HISTORY_SERVICE, 0x090F),
+            (GATE_SERVICE, 0x108F),
+            (SF_GATE_SERVICE, 0x10CB),
+        ] {
+            assert_eq!(
+                SERVICE_NODE_IDS[index as usize], expected,
+                "index {index} should address 0x{expected:04X}"
+            );
+        }
+        // Every service in the list is reachable by exactly one named index.
+        assert_eq!(SERVICE_NODE_IDS.len(), 8);
+    }
+
+    /// The full node list, including the paid-ticket service appended last.
+    fn authenticated_nodes() -> Vec<u16> {
+        let mut nodes = SERVICE_NODE_IDS.to_vec();
+        nodes.push(PAID_TICKET_SERVICE_NODE_ID);
+        nodes
     }
 
     #[test]

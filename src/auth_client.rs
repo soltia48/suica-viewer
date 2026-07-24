@@ -1,16 +1,19 @@
 //! Client for the remote mutual-authentication server.
 //!
-//! The card's keys live on the server, not here. Every authenticated operation
-//! is therefore a ping-pong: the server builds a frame, this client puts it on
-//! the card, and the card's reply goes back for the server to interpret. The
-//! card is only ever addressed through [`CardSession`], so the crypto stays
-//! server-side and this module stays a relay.
+//! The card's long-term keys live on the server, not here, so the
+//! authentication is a ping-pong: the server builds a frame, this client puts
+//! it on the card, and the card's reply goes back for the server to interpret.
+//!
+//! That is the server's *whole* involvement. On success it returns the
+//! ephemeral session material and forgets the session, and the client runs the
+//! encrypted reads itself — so card data never reaches the server, and the
+//! long-term keys never leave it.
 
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
-use crate::card::{CardError, CardSession};
+use crate::card::{CardError, CardSession, SecureSession};
 
 /// Auth server used when neither `--server` nor `AUTH_SERVER_URL` is set.
 pub const DEFAULT_AUTH_SERVER_URL: &str = "https://felica-auth.nyaa.ws";
@@ -66,7 +69,12 @@ pub struct AuthenticationResult {
     pub issue_id_hex: String,
     /// Issue parameter (PMi) as uppercase hex.
     pub issue_parameter_hex: String,
+    /// The ephemeral secure session, which the client drives from here on.
+    pub session: SecureSession,
 }
+
+/// The only secure-session scheme the server issues.
+const DES_SCHEME: &str = "des";
 
 /// One frame the server wants delivered to the card.
 struct CommandEnvelope {
@@ -78,8 +86,9 @@ struct CommandEnvelope {
 pub struct AuthClient {
     agent: ureq::Agent,
     base_url: String,
+    /// Set only while an authentication is in flight; the server destroys the
+    /// session as soon as it completes.
     session_id: Option<String>,
-    authenticated: bool,
 }
 
 impl AuthClient {
@@ -122,24 +131,18 @@ impl AuthClient {
             agent: config.into(),
             base_url,
             session_id: None,
-            authenticated: false,
         })
     }
 
     /// Drops any session state so the same transport can serve a new card.
     pub fn reset(&mut self) {
         self.session_id = None;
-        self.authenticated = false;
-    }
-
-    pub fn is_authenticated(&self) -> bool {
-        self.authenticated
     }
 
     /// Runs a full mutual-authentication sequence against `card`.
     pub fn mutual_authentication(
         &mut self,
-        card: &mut CardSession<'_>,
+        card: &mut CardSession<'_, '_>,
         system_code: u16,
         areas: &[u16],
         services: &[u16],
@@ -169,7 +172,10 @@ impl AuthClient {
                     )?;
                 }
                 Some("complete") => {
-                    self.authenticated = true;
+                    // The server discards the session the moment it hands the
+                    // material over, so the id is already dead here — keeping it
+                    // would only earn a 404 on the next card.
+                    self.session_id = None;
                     return authentication_result(&response);
                 }
                 _ => {
@@ -182,56 +188,10 @@ impl AuthClient {
         }
     }
 
-    /// Sends one encrypted command through the server and returns the decrypted
-    /// response.
-    pub fn encryption_exchange(
-        &mut self,
-        card: &mut CardSession<'_>,
-        command_code: u8,
-        payload: &[u8],
-    ) -> Result<Vec<u8>, AuthError> {
-        if !self.authenticated {
-            return Err(AuthError::Server(
-                "相互認証を先に完了する必要があります。".to_string(),
-            ));
-        }
-
-        let response = self.post(
-            "/encryption-exchange",
-            json!({
-                "session_id": self.session_id,
-                "cmd_code": command_code,
-                "payload": hex::encode(payload),
-            }),
-        )?;
-
-        let card_response = self.relay(card, &response)?;
-        let final_response = self.post(
-            "/encryption-exchange",
-            json!({
-                "session_id": self.session_id,
-                "card_response": hex::encode(card_response),
-            }),
-        )?;
-
-        let response_hex = final_response
-            .get("response")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                AuthError::Server(format!(
-                    "サーバ応答に response が含まれていません: {}",
-                    Value::Object(final_response.clone())
-                ))
-            })?;
-
-        hex::decode(response_hex)
-            .map_err(|_| AuthError::Server(format!("応答の hex 形式が不正です: {response_hex}")))
-    }
-
     /// Delivers the server's frame to the card and returns the card's reply.
     fn relay(
         &self,
-        card: &mut CardSession<'_>,
+        card: &mut CardSession<'_, '_>,
         response: &Map<String, Value>,
     ) -> Result<Vec<u8>, AuthError> {
         let command = extract_command(response)?;
@@ -365,10 +325,67 @@ fn authentication_result(response: &Map<String, Value>) -> Result<Authentication
         return Err(AuthError::Server("Issue ID の形式が不正です。".to_string()));
     }
 
+    let session = result
+        .and_then(|result| result.get("session"))
+        .ok_or_else(|| {
+            AuthError::Server(
+                "サーバ応答にセッション情報が含まれていません。認証サーバが対応バージョンか確認してください。"
+                    .to_string(),
+            )
+        })
+        .and_then(secure_session)?;
+
     Ok(AuthenticationResult {
         issue_id_hex,
         issue_parameter_hex,
+        session,
     })
+}
+
+/// Reads the ephemeral session material out of a completed authentication.
+fn secure_session(session: &Value) -> Result<SecureSession, AuthError> {
+    let scheme = session
+        .get("scheme")
+        .and_then(Value::as_str)
+        .unwrap_or(DES_SCHEME);
+    if !scheme.eq_ignore_ascii_case(DES_SCHEME) {
+        return Err(AuthError::Server(format!(
+            "未対応のセッション方式です: {scheme}"
+        )));
+    }
+
+    let key = session_bytes(session, "key")?;
+    let transaction_id = session_bytes(session, "transaction_id")?;
+    let transaction_number = session
+        .get("transaction_number")
+        .and_then(Value::as_u64)
+        .filter(|value| *value <= u64::from(u16::MAX))
+        .ok_or_else(|| {
+            AuthError::Server("セッション情報の transaction_number が不正です。".to_string())
+        })? as u16;
+
+    Ok(SecureSession {
+        key,
+        transaction_id,
+        transaction_number,
+    })
+}
+
+/// Decodes a fixed-width hex field of the session material.
+fn session_bytes<const N: usize>(session: &Value, name: &str) -> Result<[u8; N], AuthError> {
+    let hex_value = session
+        .get(name)
+        .and_then(Value::as_str)
+        .ok_or_else(|| AuthError::Server(format!("セッション情報に {name} がありません。")))?;
+
+    hex::decode(hex_value)
+        .ok()
+        .and_then(|bytes| <[u8; N]>::try_from(bytes.as_slice()).ok())
+        .ok_or_else(|| {
+            AuthError::Server(format!(
+                "セッション情報の {name} が不正です（{N} バイトの hex が必要）。"
+            ))
+        })
 }
 
 fn describe_transport_error(error: &impl std::fmt::Display) -> String {
@@ -460,22 +477,79 @@ mod tests {
         );
     }
 
+    /// A completion payload in the shape the server sends.
+    fn completion(id_field: &str, parameter_field: &str, session: &str) -> Map<String, Value> {
+        serde_json::from_str(&format!(
+            r#"{{"result": {{"{id_field}": "0103abcd", "{parameter_field}": "00ff",
+                 "session": {session}}}}}"#
+        ))
+        .unwrap()
+    }
+
+    const SESSION: &str = r#"{"scheme": "des", "key": "0011223344556677",
+        "transaction_id": "aabbccddeeff", "transaction_number": 3}"#;
+
     #[test]
     fn the_completion_payload_accepts_both_field_spellings() {
-        let response: Map<String, Value> =
-            serde_json::from_str(r#"{"result": {"idi": "0103abcd", "pmi": "00ff"}}"#).unwrap();
-        let result = authentication_result(&response).unwrap();
+        let result = authentication_result(&completion("idi", "pmi", SESSION)).unwrap();
         assert_eq!(result.issue_id_hex, "0103ABCD");
         assert_eq!(result.issue_parameter_hex, "00FF");
 
-        let response: Map<String, Value> = serde_json::from_str(
-            r#"{"result": {"issue_id": "0103abcd", "issue_parameter": "00ff"}}"#,
-        )
-        .unwrap();
+        let result =
+            authentication_result(&completion("issue_id", "issue_parameter", SESSION)).unwrap();
+        assert_eq!(result.issue_id_hex, "0103ABCD");
+    }
+
+    #[test]
+    fn the_completion_payload_carries_the_secure_session() {
+        let result = authentication_result(&completion("idi", "pmi", SESSION)).unwrap();
         assert_eq!(
-            authentication_result(&response).unwrap().issue_id_hex,
-            "0103ABCD"
+            result.session.key,
+            [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]
         );
+        assert_eq!(
+            result.session.transaction_id,
+            [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]
+        );
+        assert_eq!(result.session.transaction_number, 3);
+    }
+
+    #[test]
+    fn a_completion_payload_without_session_material_is_rejected() {
+        // This is what an older server returns; the read cannot proceed without
+        // the session, so say so rather than failing later and opaquely.
+        let response: Map<String, Value> =
+            serde_json::from_str(r#"{"result": {"idi": "0103abcd", "pmi": "00ff"}}"#).unwrap();
+        let error = authentication_result(&response).unwrap_err();
+        assert!(error.to_string().contains("セッション"));
+    }
+
+    #[test]
+    fn malformed_session_material_is_rejected() {
+        // Wrong key length, wrong transaction id length, unsupported scheme, and
+        // a counter that cannot be a u16.
+        for session in [
+            r#"{"key": "0011", "transaction_id": "aabbccddeeff", "transaction_number": 0}"#,
+            r#"{"key": "0011223344556677", "transaction_id": "aabb", "transaction_number": 0}"#,
+            r#"{"scheme": "aes128", "key": "0011223344556677",
+                "transaction_id": "aabbccddeeff", "transaction_number": 0}"#,
+            r#"{"key": "0011223344556677", "transaction_id": "aabbccddeeff",
+                "transaction_number": 70000}"#,
+            r#"{"key": "zzzzzzzzzzzzzzzz", "transaction_id": "aabbccddeeff",
+                "transaction_number": 0}"#,
+        ] {
+            assert!(
+                authentication_result(&completion("idi", "pmi", session)).is_err(),
+                "should have rejected {session}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_scheme_defaults_to_des_when_the_server_omits_it() {
+        let session = r#"{"key": "0011223344556677", "transaction_id": "aabbccddeeff",
+            "transaction_number": 0}"#;
+        assert!(authentication_result(&completion("idi", "pmi", session)).is_ok());
     }
 
     #[test]
