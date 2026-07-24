@@ -1,25 +1,34 @@
 # Suica Viewer
 
-Suica Viewer is a tool for retrieving, displaying, and saving detailed information from FeliCa-based transit IC cards. It uses a remote authentication server to read encrypted areas and offers two entry points: a console-oriented CLI and a Tkinter-based GUI.
+Suica Viewer is a tool for retrieving, displaying, and saving detailed information from FeliCa-based transit IC cards. It uses a remote authentication server to read encrypted areas and offers two entry points: a console-oriented CLI and a local web GUI.
+
+Reader control and the FeliCa protocol are provided by [felica-rs](https://github.com/soltia48/felica-rs).
 
 ## Key Features
 - Mutual authentication with a remote server to read encrypted areas
 - CLI version: formatted text output for issuance data, balance, history, commuter pass details, and more
-- GUI version: visual viewer with tabs for Overview, Issuance Info, Transaction History, Gate History, and Other; includes history filtering and JSON copy/save actions
-- Resolves company, line, and station names based on `station_codes.csv`
+- Web GUI version: visual viewer with tabs for Overview, Card Info, Transaction History, Gates, and Data; includes history filtering and JSON copy/save actions
+- Resolves company, line, and station names from `station_codes.csv`, which is compiled into the executable
 - Switch authentication servers via the `AUTH_SERVER_URL` environment variable (default: `https://felica-auth.nyaa.ws`)
 
 ## Requirements
-- Python 3.10 or later
-- [uv](https://docs.astral.sh/uv/)
-- FeliCa reader/writer supported by nfcpy (e.g., Sony RC-S380)
+- [Rust](https://www.rust-lang.org/) 1.85 or later, to build from source (the crate uses edition 2024)
+- A FeliCa reader/writer supported by felica-rs
+
+| Device | VID:PID |
+| --- | --- |
+| Sony RC-S380 (Port-100) | 054C:06C1, 054C:06C3 |
+| Sony RC-S300 (Port-400) | 054C:0DC8, 054C:0DC9, 054C:0D8F |
+| Sony RC-S320 | 054C:01BB |
+| Sony RC-S330 / RC-S360 / RC-S370 (RC-S956) | 054C:02E1, 054C:0193 |
+
 - A libusb-compatible driver bound to the reader — see [Reader Driver Setup](#reader-driver-setup)
 - Internet connectivity for communicating with the remote authentication server
 
 ## Installation
 
 ### Prebuilt executables
-Every release ships standalone executables for `suica-viewer` and `suica-viewer-gui`; no Python installation is required. Download the file matching your platform from the [Releases](../../releases) page, alongside `SHA256SUMS.txt` to verify it.
+Every release ships standalone executables for `suica-viewer` and `suica-viewer-web`. The station dataset and the web UI are embedded in the binaries, so there are no extra files to install. Download the file matching your platform from the [Releases](../../releases) page, alongside `SHA256SUMS.txt` to verify it.
 
 | Platform | Asset suffix |
 | --- | --- |
@@ -30,133 +39,107 @@ Every release ships standalone executables for `suica-viewer` and `suica-viewer-
 
 The macOS builds are unsigned, so Gatekeeper blocks the first launch. Allow the executable under System Settings → Privacy & Security.
 
-You still need to set up the reader driver, and on Linux and macOS you still need libusb. See [Reader Driver Setup](#reader-driver-setup).
+You still need to set up the reader driver. See [Reader Driver Setup](#reader-driver-setup).
 
 ### From source
 
 ```bash
-uv sync
+cargo build --release
+# Artifacts: target/release/suica-viewer, target/release/suica-viewer-web
 ```
 
+`rusb` builds libusb from source, so there is no separate libusb install. On Linux it links against libudev for device enumeration, so install `libudev-dev` (Debian/Ubuntu) first.
+
 ## Reader Driver Setup
-nfcpy talks to the reader through libusb, which needs a driver it can claim the USB device with.
+felica-rs talks to the reader through libusb, which needs a driver it can claim the USB device with.
 
-**Windows.** libusb itself is bundled, but Windows binds its own driver to the reader by default and libusb cannot open it. Use [Zadig](https://zadig.akeo.ie/) to replace the reader's driver with **WinUSB**. Note that this makes the reader unavailable to the vendor's own software (for example Sony's NFC Port Software) until you restore the original driver from Device Manager.
+**Windows.** By default Windows binds its own driver to the reader and libusb cannot open it. Use [Zadig](https://zadig.akeo.ie/) to replace the reader's driver with **WinUSB**. Once replaced, vendor software (such as Sony's NFC Port Software) cannot use the reader until you restore the original driver from Device Manager.
 
-**Linux.** Install libusb, then allow your user to access the device:
+**Linux.** Grant your user access to the device.
 
 ```bash
-sudo apt install libusb-1.0-0
-
 # Example udev rule for the Sony RC-S380 (0x054c:0x06c1, 0x054c:0x06c3)
 echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="06c3", GROUP="plugdev", MODE="0664"' \
   | sudo tee /etc/udev/rules.d/60-suica-viewer.rules
 sudo udevadm control --reload-rules
 ```
 
-Without the rule you have to run the tool as root.
+Without the rule you have to run as root.
 
-**macOS.** Install libusb:
-
-```bash
-brew install libusb
-```
+**macOS.** No extra setup is required.
 
 ## Usage (CLI)
-1. Connect a compatible FeliCa reader to your PC.
-2. Set `AUTH_SERVER_URL` if you need to specify a remote server.
-3. Present the card while running the command below to output detailed information to the console.
+1. Connect a supported FeliCa reader.
+2. Optionally set `AUTH_SERVER_URL` to point at your authentication server.
+3. Run the command below and tap a card; the details are printed to the console.
 
 ```bash
-uv run suica-viewer
+suica-viewer
 # Example:
-# AUTH_SERVER_URL=https://example.com uv run suica-viewer
+# AUTH_SERVER_URL=https://example.com suica-viewer
 ```
 
-Output is formatted with a balance summary up top, ANSI colors, and aligned tables (color is disabled automatically when not writing to a TTY or when `NO_COLOR` is set).
+Output leads with a balance summary and is formatted as colored tables. Color is disabled automatically when stdout is not a TTY or `NO_COLOR` is set.
 
 Options
-- `--json` — emit JSON instead of the human-readable tables (for scripting)
-- `-v`, `--verbose` — also show detail fields such as device numbers and raw codes
+- `--json` — emit JSON instead of tables, for scripting
+- `-v`, `--verbose` — also show device numbers, raw codes, and other detail fields
 - `--no-color` — disable ANSI color
-- `--server URL` — auth server URL (takes precedence over `AUTH_SERVER_URL`)
+- `--server URL` — authentication server URL (takes precedence over `AUTH_SERVER_URL`)
 
-Main output items
-- System issuance information (IDi, PMi)
-- Issuance information 1 & 2 (issuer, issuing station, expiration date, etc.)
-- Attribute information (card type, balance, transaction counter)
-- Transaction history (parses gate entries/exits, purchases, charges; also shows the per-transaction balance change)
-- Commuter pass data, gate entry/exit records, SF gate entry information
-- Paid-ticket / express-gate records (料金発券・改札情報) — probed and read automatically only when the card carries them (service `0x1848`); cards without it, or an auth server lacking that key, are skipped gracefully without affecting the rest
-
-## Usage (GUI)
-```bash
-uv run suica-viewer-gui
-```
-
-The GUI provides:
-- Automatically polls the NFC reader after launch and displays progress while reading when a card is detected
-- Overview tab led by a hero card showing the balance prominently, followed by key fields
-- Light/Dark theme toggle in the top-right corner
-- History tab displaying transaction history in a table, with a per-transaction balance-change column (charges highlighted in green), column-header sorting, and full-text filtering via the input box (`Ctrl+F` / `Cmd+F` to focus)
-- Gates tab showing gate history, device numbers, amounts, commuter sections (sortable columns), SF gate entry data, and paid-ticket / express-gate records when present
-- Data tab for viewing the card information JSON — copy to clipboard, save to a file, or export the transaction history as CSV
+Main output sections
+- System issuance data (IDi, PMi)
+- Issuance info (issuer, issuing station, expiry, and so on)
+- Attribute info (card type, balance, transaction counter)
+- Transaction history, decoded per entry (gate entry/exit, purchases, top-ups) with the per-transaction balance change
+- Commuter pass info, gate entry/exit records, SF gate entry records
+- Paid-ticket / express-gate records (service `0x1848`) — probed and read only when the card carries it. Cards without it, or servers without the matching key, are skipped without affecting anything else.
 
 ## Usage (Web GUI)
-A browser cannot access the USB reader or run the authentication relay itself, so `suica-viewer-web` starts a small local server that owns the reader and streams card data to the page over Server-Sent Events.
+A browser can neither reach a USB reader nor relay the mutual authentication, so `suica-viewer-web` runs a local server that owns the reader and streams card data to the page over Server-Sent Events.
 
 ```bash
-uv run suica-viewer-web
-# opens http://127.0.0.1:8765/ in your browser
+suica-viewer-web
+# Opens http://127.0.0.1:8765/ in your browser by default
 ```
 
-- Auto-detects cards and updates the page live (no reload); mirrors the desktop GUI (hero balance, tabbed layout, sortable history with per-transaction deltas, gate table, JSON/CSV export, light/dark theme).
-- Bound to `127.0.0.1` by default. Passing `--host 0.0.0.0` exposes card reading to your LAN — note that sensitive card data would then travel over the network.
+- Cards are detected automatically and the page updates live, with no reload. Includes the balance hero card, tabbed layout, sortable transaction history with per-transaction deltas, gate tables, JSON/CSV export, and light/dark themes.
+- Removing the card from the reader clears the page and waits for the next one.
+- Binds to `127.0.0.1` only by default. `--host 0.0.0.0` exposes it to the LAN — note that card data then travels over the network.
 
-Options:
+Options
 
 | Flag | Description |
 | --- | --- |
 | `--host` / `--port` | Bind address (default `127.0.0.1:8765`) |
-| `--server URL` | Auth server URL (overrides `AUTH_SERVER_URL`) |
+| `--server URL` | Authentication server URL (takes precedence over `AUTH_SERVER_URL`) |
 | `--no-browser` | Do not open a browser on startup |
-| `--demo` | Preview the UI with a built-in sample card (no reader required) |
+| `--demo` | Preview the UI with a built-in sample card, without a reader |
 
-The web GUI runs from source or an installed wheel (`uv run` / `pip install`); the prebuilt single-file executables cover the CLI and desktop GUI only.
-
-## Authentication Server Configuration
+## Authentication Server
 - Default: `https://felica-auth.nyaa.ws`
-- Set the base URL via the `AUTH_SERVER_URL` environment variable to switch servers (no trailing slash required).
-- The server must provide the following endpoints:
+- Set the `AUTH_SERVER_URL` environment variable to a base URL to switch servers (no trailing slash needed).
+- The server must expose:
   - `POST /mutual-authentication`
   - `POST /encryption-exchange`
-- During mutual authentication, commands and responses are relayed to the card. Sensitive data such as personal information or card identifiers may be transmitted, so only connect to trusted environments.
+- Intermediate authentication steps round-trip commands and responses with the card. Personal data and card identifiers may be transmitted, so only connect to servers you trust.
 
 ## Station Code Data
-- `suica_viewer/station_codes.csv` contains JR East and other station codes, allowing the app to resolve company, line, and station names from the line code and station index.
-- Replace the CSV to use a custom dataset if necessary.
+- `assets/station_codes.csv` holds station codes for JR East and other operators, resolving company, line, and station names from a line code and station order code.
+- The file is compiled into the executable at build time. To use a different dataset, edit the CSV and rebuild.
 
 ## Troubleshooting
-- `LIBUSB_ERROR_NOT_SUPPORTED [-12]`: libusb found the reader but cannot open it because no libusb-compatible driver is bound to it. On Windows, install the WinUSB driver with Zadig as described in [Reader Driver Setup](#reader-driver-setup). Running as administrator does not help — that would report `LIBUSB_ERROR_ACCESS` instead.
-- `LIBUSB_ERROR_ACCESS [-3]` on Linux: your user cannot access the USB device. Add the udev rule above, or run as root.
-- `No such device` / `Unable to initialize NFC reader`: the reader is not plugged in, or nfcpy does not recognize its USB vendor/product ID.
-- Frequent `Server communication error`: check the authentication server URL and your network connection. Adjust `AUTH_SERVER_URL` if needed.
-- Message `Detected a non-FeliCa tag`: make sure you are presenting a supported card.
+- `Operation not supported or unimplemented on this platform` on Windows: libusb sees the reader but cannot open it because no libusb-compatible driver is bound. Install the WinUSB driver with Zadig as described in [Reader Driver Setup](#reader-driver-setup). Running as administrator does not help.
+- `Access denied (insufficient permissions)` on Linux: you lack access to the USB device. Add the udev rule above or run as root.
+- `NFC リーダーを初期化できません` / `reader not found`: the reader is not connected, or its VID/PID is not in the supported list.
+- Persistent `サーバ通信エラー`: check the authentication server URL and your network connection, adjusting `AUTH_SERVER_URL` as needed.
 
-## Notes for Development
-- Code formatting: `uv run black suica_viewer`
-- The GUI does not support hot reload; restart the app after UI changes.
-- Build artifacts such as `__pycache__` are not included in the repository; clean them up manually when needed.
+Set `RUST_LOG=debug` for verbose logging, including the frames exchanged with the card.
 
-### Building the executables locally
-```bash
-uv sync --group build
-uv run pyinstaller packaging/suica-viewer.spec
-```
-
-The executables land in `dist/`. Build with an interpreter whose Tcl/Tk libraries the linker can resolve: uv's managed CPython ships Tcl/Tk 9, whose shared libraries PyInstaller cannot collect, which would yield a GUI binary that crashes on `import tkinter`. The spec fails the build rather than let that ship. Releases are built on CI with `actions/setup-python` for this reason.
-
-Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds every platform and attaches the executables to the GitHub release.
+## Development Notes
+- Format, lint, and test: `cargo fmt --all` / `cargo clippy --all-targets` / `cargo test`
+- To check the web UI without a reader: `cargo run --bin suica-viewer-web -- --demo`
+- Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds every platform and attaches the executables to a GitHub Release.
 
 ## Author
 

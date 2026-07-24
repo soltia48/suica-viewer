@@ -33,28 +33,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The interpreter has to be setup-python's rather than uv's managed CPython:
-      # uv's builds ship Tcl/Tk 9, whose shared libraries PyInstaller 6.21 fails to
-      # collect, producing a suica-viewer-gui that dies on `import tkinter`.
-      # packaging/suica-viewer.spec fails the build if that ever regresses.
-      - uses: actions/setup-python@v6
-        id: python
-        with:
-          python-version: "3.14"
+      - uses: dtolnay/rust-toolchain@stable
 
-      # Pinned to an exact tag: setup-uv publishes no floating v8 major tag.
-      - uses: astral-sh/setup-uv@v8.3.2
+      - uses: Swatinem/rust-cache@v2
         with:
-          enable-cache: true
+          key: ${{ matrix.target }}
 
-      - name: Install dependencies
-        env:
-          UV_PYTHON: ${{ steps.python.outputs.python-path }}
-        run: uv sync --frozen --no-dev --group build
+      # rusb builds its own copy of libusb, but links against libudev on Linux
+      # for device enumeration.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libudev-dev
 
       - name: Build executables
-        run: uv run --no-sync pyinstaller --clean --noconfirm packaging/suica-viewer.spec
+        run: cargo build --release --locked
 
+      # Both binaries are self-contained: the station dataset and the web UI are
+      # compiled in, so there is nothing to ship alongside them.
       - name: Stage release assets
         shell: bash
         env:
@@ -62,15 +59,15 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; else ext=""; fi
-          mkdir -p assets
-          for name in suica-viewer suica-viewer-gui; do
-            cp "dist/${name}${ext}" "assets/${name}-${VERSION}-${TARGET}${ext}"
+          mkdir -p dist
+          for name in suica-viewer suica-viewer-web; do
+            cp "target/release/${name}${ext}" "dist/${name}-${VERSION}-${TARGET}${ext}"
           done
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
-          path: assets/*
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -83,11 +80,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          path: assets
+          path: dist
           merge-multiple: true
 
       - name: Generate checksums
-        working-directory: assets
+        working-directory: dist
         run: |
           sha256sum * > "$RUNNER_TEMP/SHA256SUMS.txt"
           mv "$RUNNER_TEMP/SHA256SUMS.txt" .
@@ -99,7 +96,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" assets/* --clobber
+            gh release upload "$TAG" dist/* --clobber
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes assets/*
+            gh release create "$TAG" --title "$TAG" --generate-notes dist/*
           fi
