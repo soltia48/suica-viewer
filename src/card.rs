@@ -198,7 +198,7 @@ impl<'a, 'd> CardSession<'a, 'd> {
             request_code: 0x00,
             time_slots: 0x00,
         }
-        .to_frame();
+        .to_frame()?;
         self.exchange(&frame, POLLING_TIMEOUT)?;
         Ok(())
     }

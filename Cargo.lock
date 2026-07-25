@@ -11,6 +11,7 @@ dependencies = [
  "cipher",
  "cpubits",
  "cpufeatures",
+ "zeroize",
 ]
 
 [[package]]
@@ -170,6 +171,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -204,9 +206,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.3.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89588d05638b5b4594a3348a2d6c20277e43a7f5c5202b05cc56888475a47b8"
+checksum = "5add81bb678e6cb321aff7fa0dc7689ad82b112dbc032cea19f91d6b8e3582b9"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -249,6 +251,7 @@ dependencies = [
  "block-buffer",
  "crypto-common",
  "inout",
+ "zeroize",
 ]
 
 [[package]]
@@ -490,6 +493,7 @@ dependencies = [
  "block-buffer",
  "crypto-common",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -563,7 +567,7 @@ dependencies = [
 [[package]]
 name = "felica-rs"
 version = "0.1.0"
-source = "git+https://github.com/soltia48/felica-rs.git#43471f0fd8f9a0b85418a2729a838be73561a93f"
+source = "git+https://github.com/soltia48/felica-rs.git#31063bde3e96c7267e1305313a1ef84f4722265c"
 dependencies = [
  "aes",
  "cbc",
@@ -580,6 +584,7 @@ dependencies = [
  "smallvec",
  "subtle",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
@@ -741,6 +746,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c"
 dependencies = [
  "typenum",
+ "zeroize",
 ]
 
 [[package]]
@@ -2136,6 +2142,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "zerotrie"
