@@ -19,7 +19,8 @@
     "issued_by": "自動券売機",
     "issued_station": "東日本旅客鉄道 東海道線 東京",
     "issued_at": "2024-04-01",
-    "expires_at": "2034-04-01"
+    "expires_at": "2034-04-01",
+    "collected": false
   },
   "attribute": {
     "card_type_code": 2,
