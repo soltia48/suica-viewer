@@ -410,6 +410,8 @@ impl TextReport {
             "有効期間",
             format!("{} 〜 {}", commuter.valid_from, commuter.valid_to),
         ));
+        pairs.push(("券番", commuter.pass_number.clone()));
+        pairs.push(("R通番", commuter.r_number.clone()));
         pairs.push(("発行日", commuter.issued_at.clone()));
         self.key_values(&pairs);
     }

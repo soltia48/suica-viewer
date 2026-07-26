@@ -35,12 +35,13 @@ pub const AREA_NODE_IDS: [u16; 5] = [0x0000, 0x0040, 0x0800, 0x0FC0, 0x1000];
 /// The order is not cosmetic: FeliCa requires every key-requiring node to be
 /// listed before any key-free one, so the four keyed services come first.
 /// Address a service by the `*_SERVICE` index below rather than by position.
-pub const SERVICE_NODE_IDS: [u16; 8] = [
+pub const SERVICE_NODE_IDS: [u16; 9] = [
     // Key-requiring (Random/Purse read-only with key).
     0x004A, // 発行情報
     0x0816, // その他（用途未確定）
     0x08CA, // 最終チャージ情報
     0x104A, // 定期情報
+    0x100A, // 定期情報?
     // Key-free (Random/Cyclic read-only without key).
     0x008B, // 属性情報
     0x090F, // 取引履歴
@@ -54,10 +55,11 @@ const ISSUE_SERVICE: u8 = 0;
 const MISC_SERVICE: u8 = 1;
 const TOPUP_SERVICE: u8 = 2;
 const COMMUTER_SERVICE: u8 = 3;
-const ATTRIBUTE_SERVICE: u8 = 4;
-const HISTORY_SERVICE: u8 = 5;
-const GATE_SERVICE: u8 = 6;
-const SF_GATE_SERVICE: u8 = 7;
+const PASS_NUMBER_SERVICE: u8 = 4;
+const ATTRIBUTE_SERVICE: u8 = 5;
+const HISTORY_SERVICE: u8 = 6;
+const GATE_SERVICE: u8 = 7;
+const SF_GATE_SERVICE: u8 = 8;
 
 /// Paid-ticket / express-gate service (料金発券・改札情報), read-only variant.
 /// Not present on every card, so it is probed and appended to the authenticated
@@ -184,6 +186,8 @@ pub struct Commuter {
     pub via1_station: String,
     pub via2_station: String,
     pub issued_at: String,
+    pub pass_number: String,
+    pub r_number: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -309,6 +313,15 @@ fn describe_read_failure(error: &CardError) -> String {
 
 fn be16(block: &Block, offset: usize) -> u16 {
     u16::from_be_bytes([block[offset], block[offset + 1]])
+}
+
+fn decode_bcd(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        s.push(char::from(b'0' + (b >> 4)));
+        s.push(char::from(b'0' + (b & 0x0F)));
+    }
+    s
 }
 
 fn le16(block: &Block, offset: usize) -> u16 {
@@ -461,10 +474,16 @@ impl Decoder<'_> {
         entries
     }
 
-    fn commuter(&self, blocks: &[Block]) -> Result<Commuter> {
+    fn commuter(&self, blocks: &[Block], pass_number_blocks: &[Block]) -> Result<Commuter> {
         require(blocks, 3, "定期情報")?;
+        require(pass_number_blocks, 2, "定期券番情報")?;
         let (primary, supplemental) = (&blocks[0], &blocks[2]);
 
+        let pass_number_bytes = [
+            pass_number_blocks[0][15],
+            pass_number_blocks[1][0],
+            pass_number_blocks[1][1],
+        ];
         Ok(Commuter {
             valid_from: format_date(be16(primary, 0)),
             valid_to: format_date(be16(primary, 2)),
@@ -473,6 +492,11 @@ impl Decoder<'_> {
             via1_station: self.station(primary[12], primary[13]),
             via2_station: self.station(primary[14], primary[15]),
             issued_at: format_date(be16(supplemental, 5)),
+            pass_number: decode_bcd(&pass_number_bytes),
+            r_number: decode_bcd(&pass_number_blocks[1][10..12])
+                .chars()
+                .skip(1)
+                .collect(),
         })
     }
 
@@ -666,7 +690,9 @@ impl CardDataService {
             decoder.transaction_history(&read_blocks(card, HISTORY_SERVICE, 20)?);
         report(85.0);
 
-        let commuter = decoder.commuter(&read_blocks(card, COMMUTER_SERVICE, 3)?)?;
+        let commuter_blocks = read_blocks(card, COMMUTER_SERVICE, 3)?;
+        let pass_number_blocks = read_blocks(card, PASS_NUMBER_SERVICE, 2)?;
+        let commuter = decoder.commuter(&commuter_blocks, &pass_number_blocks)?;
         report(92.0);
 
         let gate = decoder.gate(&read_blocks(card, GATE_SERVICE, 3)?);

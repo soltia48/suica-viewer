@@ -115,6 +115,8 @@
     "end_station": "東日本旅客鉄道 東海道線 新橋",
     "via1_station": "東日本旅客鉄道 東海道線 有楽町",
     "via2_station": "不明 (線区コード: 0x00, 駅順コード: 0x00)",
+    "pass_number": "012345",
+    "r_number": "001",
     "issued_at": "2025-03-20"
   },
   "gate": [
