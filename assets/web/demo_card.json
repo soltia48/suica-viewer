@@ -117,7 +117,14 @@
     "via2_station": "不明 (線区コード: 0x00, 駅順コード: 0x00)",
     "pass_number": "012345",
     "r_number": "001",
+    "sale_price": 45240,
     "issued_at": "2025-03-20"
+  },
+  "auto_charge": {
+    "contracted": true,
+    "enabled": true,
+    "charge_amount": 3000,
+    "threshold": 2000
   },
   "gate": [
     {

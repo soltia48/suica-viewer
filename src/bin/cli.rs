@@ -201,6 +201,7 @@ impl TextReport {
         }
         self.transaction_history(card);
         self.commuter_pass(card);
+        self.auto_charge(card);
         self.gate_history(card);
         self.sf_gate(card);
         self.paid_ticket(card);
@@ -410,7 +411,23 @@ impl TextReport {
         ));
         pairs.push(("券番", commuter.pass_number.clone()));
         pairs.push(("R通番", commuter.r_number.clone()));
+        pairs.push(("発売額", format_yen(i64::from(commuter.sale_price))));
         pairs.push(("発行日", commuter.issued_at.clone()));
+        self.key_values(&pairs);
+    }
+
+    fn auto_charge(&mut self, card: &CardData) {
+        self.section("オートチャージ");
+        let ac = &card.auto_charge;
+        let yes_no = |v: bool| if v { "有" } else { "無" };
+        let mut pairs = vec![
+            ("契約", yes_no(ac.contracted).to_string()),
+            ("有効", yes_no(ac.enabled).to_string()),
+        ];
+        if ac.contracted {
+            pairs.push(("チャージ額", yen_compact(ac.charge_amount)));
+            pairs.push(("しきい値", yen_compact(ac.threshold)));
+        }
         self.key_values(&pairs);
     }
 

@@ -40,8 +40,8 @@ pub const SERVICE_NODE_IDS: [u16; 9] = [
     0x004A, // 発行情報
     0x0816, // その他（用途未確定）
     0x08CA, // 最終チャージ情報
+    0x100A, // 拡張情報（定期券番・定期発売額・オートチャージ等）
     0x104A, // 定期情報
-    0x100A, // 定期情報?
     // Key-free (Random/Cyclic read-only without key).
     0x008B, // 属性情報
     0x090F, // 取引履歴
@@ -54,8 +54,8 @@ pub const SERVICE_NODE_IDS: [u16; 9] = [
 const ISSUE_SERVICE: u8 = 0;
 const MISC_SERVICE: u8 = 1;
 const TOPUP_SERVICE: u8 = 2;
-const COMMUTER_SERVICE: u8 = 3;
-const PASS_NUMBER_SERVICE: u8 = 4;
+const EXTENDED_SERVICE: u8 = 3;
+const COMMUTER_SERVICE: u8 = 4;
 const ATTRIBUTE_SERVICE: u8 = 5;
 const HISTORY_SERVICE: u8 = 6;
 const GATE_SERVICE: u8 = 7;
@@ -188,6 +188,7 @@ pub struct Commuter {
     pub issued_at: String,
     pub pass_number: String,
     pub r_number: String,
+    pub sale_price: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,6 +221,14 @@ pub struct SfGate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoCharge {
+    pub contracted: bool,
+    pub enabled: bool,
+    pub charge_amount: u16,
+    pub threshold: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaidTicketEntry {
     pub index: usize,
     pub depart_station: String,
@@ -244,6 +253,7 @@ pub struct CardData {
     pub unknown: UnknownInfo,
     pub transaction_history: Vec<TransactionEntry>,
     pub commuter: Commuter,
+    pub auto_charge: AutoCharge,
     pub gate: Vec<GateEntry>,
     pub sf_gate: SfGate,
     #[serde(default)]
@@ -474,15 +484,15 @@ impl Decoder<'_> {
         entries
     }
 
-    fn commuter(&self, blocks: &[Block], pass_number_blocks: &[Block]) -> Result<Commuter> {
+    fn commuter(&self, blocks: &[Block], extended_blocks: &[Block]) -> Result<Commuter> {
         require(blocks, 3, "定期情報")?;
-        require(pass_number_blocks, 2, "定期券番情報")?;
+        require(extended_blocks, 10, "拡張情報")?;
         let (primary, supplemental) = (&blocks[0], &blocks[2]);
 
         let pass_number_bytes = [
-            pass_number_blocks[0][15],
-            pass_number_blocks[1][0],
-            pass_number_blocks[1][1],
+            extended_blocks[0][15],
+            extended_blocks[1][0],
+            extended_blocks[1][1],
         ];
         Ok(Commuter {
             valid_from: format_date(be16(primary, 0)),
@@ -493,11 +503,28 @@ impl Decoder<'_> {
             via2_station: self.station(primary[14], primary[15]),
             issued_at: format_date(be16(supplemental, 5)),
             pass_number: decode_bcd(&pass_number_bytes),
-            r_number: decode_bcd(&pass_number_blocks[1][10..12])
+            r_number: decode_bcd(&extended_blocks[1][10..12])
                 .chars()
                 .skip(1)
                 .collect(),
+            sale_price: u32::from_le_bytes([
+                extended_blocks[1][7],
+                extended_blocks[1][8],
+                extended_blocks[1][9],
+                0,
+            ]),
         })
+    }
+
+    fn auto_charge(block: &Block) -> AutoCharge {
+        let byte0 = block[0];
+        let byte1 = block[1];
+        AutoCharge {
+            contracted: (byte0 >> 7) & 1 == 1,
+            enabled: (byte0 >> 6) & 1 == 1,
+            charge_amount: u16::from(byte0 & 0x0F) * 1000,
+            threshold: u16::from((byte1 >> 2) & 0x0F) * 1000,
+        }
     }
 
     fn gate(&self, blocks: &[Block]) -> Vec<GateEntry> {
@@ -691,8 +718,9 @@ impl CardDataService {
         report(85.0);
 
         let commuter_blocks = read_blocks(card, COMMUTER_SERVICE, 3)?;
-        let pass_number_blocks = read_blocks(card, PASS_NUMBER_SERVICE, 2)?;
-        let commuter = decoder.commuter(&commuter_blocks, &pass_number_blocks)?;
+        let extended_blocks = read_blocks(card, EXTENDED_SERVICE, 10)?;
+        let commuter = decoder.commuter(&commuter_blocks, &extended_blocks)?;
+        let auto_charge = Decoder::auto_charge(&extended_blocks[9]);
         report(92.0);
 
         let gate = decoder.gate(&read_blocks(card, GATE_SERVICE, 3)?);
@@ -725,6 +753,7 @@ impl CardDataService {
             unknown,
             transaction_history,
             commuter,
+            auto_charge,
             gate,
             sf_gate,
             paid_ticket,

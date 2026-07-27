@@ -588,10 +588,24 @@
                   ["経由駅2", cm.via2_station],
                   ["券番", cm.pass_number],
                   ["R通番", cm.r_number],
+                  ["発売額", yen(cm.sale_price)],
                   ["発行日", cm.issued_at],
                 ])
               : el("div", { class: "empty", text: "定期券なし" }),
           ),
+          (() => {
+            const ac = c.auto_charge;
+            const yesNo = (v) => (v ? "有" : "無");
+            const rows = [
+              ["契約", yesNo(ac.contracted)],
+              ["有効", yesNo(ac.enabled)],
+            ];
+            if (ac.contracted) {
+              rows.push(["チャージ額", yen(ac.charge_amount)]);
+              rows.push(["しきい値", yen(ac.threshold)]);
+            }
+            return card("オートチャージ", kvGrid(rows));
+          })(),
         );
         root.append(cols);
       }
