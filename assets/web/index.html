@@ -456,9 +456,7 @@
           el("div", {
             class: "sub",
             text: c
-              ? [c.attribute.card_type, c.issue_primary.issuer_id]
-                  .filter(hasValue)
-                  .join("  ·  ") || "カード読取済み"
+              ? c.issue_primary.issuer_id || "カード読取済み"
               : "カードをかざしてください",
           }),
         );
@@ -479,7 +477,6 @@
               ["PMm", c.system.pmm_hex],
               ["IDi", c.system.idi_display],
               ["PMi", c.system.pmi],
-              ["カード種別", c.attribute.card_type],
               ["発行者", c.issue_primary.issuer_id],
             ]),
           ),
@@ -558,18 +555,19 @@
               ["有効期限", i.expires_at],
             ]),
           ),
-          card(
-            "カード属性",
-            kvGrid([
-              ["カード種別", a.card_type],
-              [
-                "地域",
-                `${a.region} (0x${a.region.toString(16).padStart(2, "0").toUpperCase()})`,
-              ],
-              ["残高", yen(a.balance)],
-              ["取引通番", a.transaction_number?.toLocaleString("ja-JP")],
-            ]),
-          ),
+          (() => {
+            const u = (v) => (v ? "利用する" : "利用しない");
+            return card(
+              "カード属性",
+              kvGrid([
+                ["残高", yen(a.balance)],
+                ["取引通番", a.transaction_number?.toLocaleString("ja-JP")],
+                ["音声案内サービス", u(a.voice_guidance)],
+                ["定期有効期間外のSF利用", u(a.sf_outside_commuter)],
+                ["タッチでGo！新幹線", u(a.touch_de_go)],
+              ]),
+            );
+          })(),
           card(
             "最終チャージ情報",
             kvGrid([

@@ -122,16 +122,6 @@ fn intermediate_gate_instruction_type(code: u8) -> Option<&'static str> {
     })
 }
 
-/// Card type label for the high nibble of the attribute block's type byte.
-pub fn card_type_label(code: u8) -> &'static str {
-    match code {
-        0 => "せたまる/IruCa",
-        2 => "Suica/PiTaPa/TOICA/PASMO",
-        3 => "ICOCA",
-        _ => "不明",
-    }
-}
-
 /// Issuer company name and two-letter identifier for a known issuer ID.
 fn issuer_id_info(issuer_id_hex: &str) -> Option<(&'static str, &'static str)> {
     Some(match issuer_id_hex {
@@ -260,13 +250,6 @@ pub fn format_yen(value: i64) -> String {
 }
 
 /// Renders the attribute region code as both decimal and hex.
-///
-/// No authoritative name mapping for these codes is available, so the raw value
-/// is surfaced rather than fabricating a label.
-pub fn format_region(region_code: u8) -> String {
-    format!("{region_code} (0x{region_code:02X})")
-}
-
 /// Resolves a line/station code pair to `会社名 線区名 駅名`.
 pub fn format_station(lookup: &StationCodeLookup, line_code: u8, station_order: u8) -> String {
     match lookup.get(line_code, station_order) {

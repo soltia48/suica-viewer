@@ -22,11 +22,11 @@
     "expires_at": "2034-04-01"
   },
   "attribute": {
-    "card_type_code": 2,
-    "card_type": "Suica/PiTaPa/TOICA/PASMO",
-    "region": 2,
     "balance": 3820,
-    "transaction_number": 184
+    "transaction_number": 184,
+    "voice_guidance": true,
+    "sf_outside_commuter": true,
+    "touch_de_go": false
   },
   "last_topup": {
     "equipment_code": 22,

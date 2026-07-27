@@ -12,7 +12,7 @@ use crate::auth_client::{AuthClient, AuthError};
 use crate::card::{CardError, CardSession};
 use crate::station_codes::StationCodeLookup;
 use crate::utils::{
-    SYSTEM_CODE, card_type_label, equipment_type_to_str, format_birth_date, format_date,
+    SYSTEM_CODE, equipment_type_to_str, format_birth_date, format_date,
     format_station, format_time, gate_in_out_type_to_str, gate_instruction_type_to_str,
     idi_bytes_to_str, intermediate_gate_instruction_type_to_str, issuer_id_to_str, pay_type_to_str,
     transaction_type_to_str,
@@ -129,11 +129,11 @@ pub struct IssuePrimary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attribute {
-    pub card_type_code: u8,
-    pub card_type: String,
-    pub region: u8,
     pub balance: u16,
     pub transaction_number: u16,
+    pub voice_guidance: bool,
+    pub sf_outside_commuter: bool,
+    pub touch_de_go: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -389,14 +389,14 @@ impl Decoder<'_> {
     fn attribute(&self, blocks: &[Block]) -> Result<Attribute> {
         require(blocks, 1, "属性情報")?;
         let block = &blocks[0];
-        let card_type_code = block[8] >> 4;
+        let settings = block[8];
 
         Ok(Attribute {
-            card_type_code,
-            card_type: card_type_label(card_type_code).to_string(),
-            region: block[8] & 0x0F,
             balance: le16(block, 11),
             transaction_number: be16(block, 14),
+            voice_guidance: (settings & 0x10) != 0,
+            sf_outside_commuter: (settings & 0x20) != 0,
+            touch_de_go: (settings & 0x04) != 0,
         })
     }
 

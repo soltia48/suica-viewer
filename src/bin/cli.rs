@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use suica_viewer::card::SharedDriver;
 use suica_viewer::card_data::{CardData, GateEntry, PaidTicketEntry, TransactionEntry};
-use suica_viewer::utils::{format_region, format_yen, thousands};
+use suica_viewer::utils::{format_yen, thousands};
 use suica_viewer::{
     AuthClient, CardDataService, CardSession, SYSTEM_CODE, StationCodeLookup, reader,
     resolve_server_url,
@@ -271,7 +271,6 @@ impl TextReport {
         self.lines.push(String::new());
         self.key_values(&[
             ("残高", balance),
-            ("カード種別", card.attribute.card_type.clone()),
             ("発行者", card.issue_primary.issuer_id.clone()),
             ("有効期限", card.issue_primary.expires_at.clone()),
         ]);
@@ -315,18 +314,17 @@ impl TextReport {
         let attribute = &card.attribute;
         self.section("属性情報");
 
-        let mut pairs = vec![
-            ("カード種別", attribute.card_type.clone()),
+        let use_str = |v: bool| if v { "利用する" } else { "利用しない" };
+        self.key_values(&[
             ("残高", format_yen(i64::from(attribute.balance))),
             (
                 "取引通番",
                 thousands(i64::from(attribute.transaction_number)),
             ),
-        ];
-        if self.verbose {
-            pairs.push(("地域コード", format_region(attribute.region)));
-        }
-        self.key_values(&pairs);
+            ("音声案内サービス", use_str(attribute.voice_guidance).to_string()),
+            ("定期有効期間外のSF利用", use_str(attribute.sf_outside_commuter).to_string()),
+            ("タッチでGo！新幹線", use_str(attribute.touch_de_go).to_string()),
+        ]);
     }
 
     fn last_topup(&mut self, card: &CardData) {
