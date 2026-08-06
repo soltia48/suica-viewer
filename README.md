@@ -89,7 +89,7 @@ Options
 
 Main output sections
 - System issuance data (IDi, PMi)
-- Issuance info (issuer, issuing station, expiry, and so on)
+- Issuance info (issuer, issuing station, expiry, collected/invalidated flag, and so on)
 - Attribute info (card type, balance, transaction counter)
 - Transaction history, decoded per entry (gate entry/exit, purchases, top-ups) with the per-transaction balance change
 - Commuter pass info, gate entry/exit records, SF gate entry records
