@@ -117,6 +117,10 @@ impl Palette {
     fn green(self, text: &str) -> String {
         self.wrap("32", text)
     }
+
+    fn red(self, text: &str) -> String {
+        self.wrap("31", text)
+    }
 }
 
 // --------------------------------------------------------------------------- //
@@ -270,11 +274,15 @@ impl TextReport {
             .green(&format_yen(i64::from(card.attribute.balance)));
         let balance = self.palette.bold(&balance);
         self.lines.push(String::new());
-        self.key_values(&[
+        let mut pairs = vec![
             ("残高", balance),
             ("発行者", card.issue_primary.issuer_id.clone()),
             ("有効期限", card.issue_primary.expires_at.clone()),
-        ]);
+        ];
+        if card.issue_primary.collected {
+            pairs.push(("状態", self.palette.red("取り込み済み（無効カード）")));
+        }
+        self.key_values(&pairs);
     }
 
     fn identification(&mut self, card: &CardData) {
@@ -308,6 +316,12 @@ impl TextReport {
             ("有効期限", issue.expires_at.clone()),
             ("デポジット額", format_yen(i64::from(issue.deposit))),
         ]);
+        if issue.collected {
+            pairs.push((
+                "取り込み済み",
+                self.palette.red("はい（無効カード）").to_string(),
+            ));
+        }
         self.key_values(&pairs);
     }
 

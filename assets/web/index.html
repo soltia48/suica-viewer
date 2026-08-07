@@ -23,6 +23,8 @@
           0 1px 3px rgba(17, 24, 39, 0.08), 0 1px 2px rgba(17, 24, 39, 0.04);
         --tab-fg: #4b5563;
         --pill: #eef1f7;
+        --flag-fg: #b3261e;
+        --flag-bg: #fdecea;
       }
       @media (prefers-color-scheme: dark) {
         :root:not([data-theme="light"]) {
@@ -41,6 +43,8 @@
           --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
           --tab-fg: #9ca3af;
           --pill: #31333f;
+          --flag-fg: #ff8a80;
+          --flag-bg: rgba(255, 138, 128, 0.14);
         }
       }
       :root[data-theme="dark"] {
@@ -59,6 +63,8 @@
         --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
         --tab-fg: #9ca3af;
         --pill: #31333f;
+        --flag-fg: #ff8a80;
+        --flag-bg: rgba(255, 138, 128, 0.14);
       }
 
       * {
@@ -214,6 +220,25 @@
       .hero .sub {
         color: var(--hero-sub);
         font-size: 14px;
+      }
+      .flag {
+        display: inline-block;
+        margin-top: 10px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        border: 1px solid currentColor;
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--flag-fg);
+        background: var(--flag-bg);
+      }
+      .hero .flag {
+        color: #fff;
+        background: rgba(0, 0, 0, 0.28);
+        border-color: rgba(255, 255, 255, 0.55);
+      }
+      .grid dd .flag {
+        margin-top: 0;
       }
 
       .card {
@@ -459,6 +484,9 @@
               ? c.issue_primary.issuer_id || "カード読取済み"
               : "カードをかざしてください",
           }),
+          c?.issue_primary?.collected
+            ? el("div", { class: "flag", text: "取り込み済み（無効カード）" })
+            : null,
         );
         root.append(hero);
         if (!c) {
@@ -497,6 +525,10 @@
               ["発行日", c.issue_primary.issued_at],
               ["有効期限", c.issue_primary.expires_at],
               ["発行駅", c.issue_primary.issued_station],
+              [
+                "取り込み済み",
+                c.issue_primary.collected ? "はい（無効カード）" : "いいえ",
+              ],
             ]),
           ),
           card(
@@ -553,6 +585,7 @@
               ["発行駅", i.issued_station],
               ["発行日", i.issued_at],
               ["有効期限", i.expires_at],
+              ["取り込み済み", i.collected ? "はい（無効カード）" : "いいえ"],
             ]),
           ),
           (() => {

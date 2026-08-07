@@ -73,6 +73,10 @@ const DATA_BLOCK_SIZE: usize = 16;
 /// carry, and this is the size the protocol has always been driven at here.
 const MAX_BLOCKS_PER_REQUEST: usize = 9;
 
+/// Bit 6 of byte 9 in the 発行情報 metadata block marks the card as collected
+/// (取り込み済み), which also makes it invalid for further use.
+const COLLECTED_FLAG_MASK: u8 = 1 << 6;
+
 /// Purchase (物販) transactions store a clock instead of entry/exit stations.
 const PURCHASE_TRANSACTION_TYPE: u8 = 0x46;
 
@@ -125,6 +129,9 @@ pub struct IssuePrimary {
     pub issued_station: String,
     pub issued_at: String,
     pub expires_at: String,
+    /// 取り込み済み（無効）フラグ。改札機などがカードを回収した時点で立ち、
+    /// 以降そのカードは無効として扱われる。
+    pub collected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -391,6 +398,7 @@ impl Decoder<'_> {
 
         let issuer_id_hex = hex::encode_upper(&metadata[0..2]);
         let issued_by_code = metadata[2];
+        let collected = metadata[9] & COLLECTED_FLAG_MASK != 0;
 
         Ok(IssuePrimary {
             owner_name: decode_owner_name(owner),
@@ -408,6 +416,7 @@ impl Decoder<'_> {
             issued_station: self.station(metadata[3], metadata[4]),
             issued_at: format_date(be16(metadata, 7)),
             expires_at: format_date(be16(metadata, 14)),
+            collected,
         })
     }
 
@@ -894,6 +903,26 @@ mod tests {
         let mut bytes = vec![0x8E, 0x52, 0x93, 0x63];
         bytes.resize(DATA_BLOCK_SIZE, 0x00);
         assert_eq!(decode_owner_name(&block(&bytes)), "山田");
+    }
+
+    #[test]
+    fn the_collected_flag_comes_from_bit_6_of_metadata_byte_9() {
+        let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let empty = [0u8; DATA_BLOCK_SIZE];
+        let metadata = |byte9: u8| block(&[0, 0, 0, 0, 0, 0, 0, 0, 0, byte9]);
+
+        let collected = |byte9: u8| {
+            decoder(&stations)
+                .issue_primary(&[empty, empty, empty, metadata(byte9)])
+                .unwrap()
+                .collected
+        };
+
+        assert!(!collected(0x00));
+        assert!(collected(0x40));
+        // Neighbouring bits must not be mistaken for it.
+        assert!(!collected(0xBF));
+        assert!(collected(0xFF));
     }
 
     #[test]
