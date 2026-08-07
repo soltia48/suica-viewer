@@ -179,6 +179,8 @@ pub struct TransactionEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Commuter {
+    pub issuer_id: String,
+    pub issuer_id_hex: String,
     pub valid_from: String,
     pub valid_to: String,
     pub start_station: String,
@@ -189,6 +191,10 @@ pub struct Commuter {
     pub pass_number: String,
     pub r_number: String,
     pub sale_price: u32,
+    pub purchase_pay_type_code: u8,
+    pub purchase_pay_type: String,
+    /// 通学証明書省略期限。学生定期のみ。非該当時は `"—"`.
+    pub commuter_certificate_expiry: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -320,6 +326,15 @@ fn describe_read_failure(error: &CardError) -> String {
 // --------------------------------------------------------------------------- //
 // Block decoding                                                              //
 // --------------------------------------------------------------------------- //
+
+/// 定期券・企画券の購入支払種別。取引履歴の `pay_type` と同じコード体系だが
+/// 0x3F は「クレジットカード」の意味で使われる。
+fn purchase_pay_type_to_str(code: u8) -> String {
+    if code == 0x3F {
+        return "クレジットカード".to_string();
+    }
+    pay_type_to_str(code)
+}
 
 fn be16(block: &Block, offset: usize) -> u16 {
     u16::from_be_bytes([block[offset], block[offset + 1]])
@@ -494,7 +509,10 @@ impl Decoder<'_> {
             extended_blocks[1][0],
             extended_blocks[1][1],
         ];
+        let issuer_id_hex = hex::encode_upper(&extended_blocks[0][0..2]);
         Ok(Commuter {
+            issuer_id: issuer_id_to_str(&issuer_id_hex),
+            issuer_id_hex,
             valid_from: format_date(be16(primary, 0)),
             valid_to: format_date(be16(primary, 2)),
             start_station: self.station(primary[8], primary[9]),
@@ -513,6 +531,9 @@ impl Decoder<'_> {
                 extended_blocks[1][9],
                 0,
             ]),
+            purchase_pay_type_code: extended_blocks[1][6],
+            purchase_pay_type: purchase_pay_type_to_str(extended_blocks[1][6]),
+            commuter_certificate_expiry: format_date(be16(&extended_blocks[5], 10)),
         })
     }
 
@@ -840,6 +861,7 @@ mod tests {
             (ISSUE_SERVICE, 0x004A),
             (MISC_SERVICE, 0x0816),
             (TOPUP_SERVICE, 0x08CA),
+            (EXTENDED_SERVICE, 0x100A),
             (COMMUTER_SERVICE, 0x104A),
             (ATTRIBUTE_SERVICE, 0x008B),
             (HISTORY_SERVICE, 0x090F),
@@ -852,7 +874,7 @@ mod tests {
             );
         }
         // Every service in the list is reachable by exactly one named index.
-        assert_eq!(SERVICE_NODE_IDS.len(), 8);
+        assert_eq!(SERVICE_NODE_IDS.len(), 9);
     }
 
     /// The full node list, including the paid-ticket service appended last.
@@ -979,7 +1001,7 @@ mod tests {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
         let one = vec![[0u8; DATA_BLOCK_SIZE]];
         assert!(decoder(&stations).issue_primary(&one).is_err());
-        assert!(decoder(&stations).commuter(&one).is_err());
+        assert!(decoder(&stations).commuter(&one, &one).is_err());
         assert!(decoder(&stations).sf_gate(&one).is_err());
         assert!(decoder(&stations).attribute(&[]).is_err());
     }
@@ -988,7 +1010,9 @@ mod tests {
     fn commuter_presence_keys_off_the_start_date() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
         let blocks = vec![[0u8; DATA_BLOCK_SIZE]; 3];
-        let commuter = decoder(&stations).commuter(&blocks).unwrap();
+        let extended = vec![[0u8; DATA_BLOCK_SIZE]; 10];
+        let commuter = decoder(&stations).commuter(&blocks, &extended).unwrap();
         assert_eq!(commuter.valid_from, "—");
+        assert_eq!(commuter.commuter_certificate_expiry, "—");
     }
 }

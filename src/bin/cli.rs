@@ -389,10 +389,13 @@ impl TextReport {
         }
 
         let commuter = &card.commuter;
-        let mut pairs = vec![(
-            "区間",
-            format!("{} → {}", commuter.start_station, commuter.end_station),
-        )];
+        let mut pairs = vec![
+            ("発行事業者", commuter.issuer_id.clone()),
+            (
+                "区間",
+                format!("{} → {}", commuter.start_station, commuter.end_station),
+            ),
+        ];
 
         let vias: Vec<&str> = [
             clean_station(Some(&commuter.via1_station)),
@@ -410,9 +413,13 @@ impl TextReport {
             format!("{} 〜 {}", commuter.valid_from, commuter.valid_to),
         ));
         pairs.push(("券番", commuter.pass_number.clone()));
-        pairs.push(("R通番", commuter.r_number.clone()));
         pairs.push(("発売額", format_yen(i64::from(commuter.sale_price))));
+        pairs.push(("購入時支払方法", commuter.purchase_pay_type.clone()));
+        pairs.push(("R通番", commuter.r_number.clone()));
         pairs.push(("発行日", commuter.issued_at.clone()));
+        if commuter.commuter_certificate_expiry != "—" {
+            pairs.push(("通学証明書省略期限", commuter.commuter_certificate_expiry.clone()));
+        }
         self.key_values(&pairs);
     }
 

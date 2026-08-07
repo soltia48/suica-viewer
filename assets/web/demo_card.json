@@ -109,6 +109,8 @@
     }
   ],
   "commuter": {
+    "issuer_id": "0103 (東日本旅客鉄道株式会社 / JE)",
+    "issuer_id_hex": "0103",
     "valid_from": "2025-04-01",
     "valid_to": "2025-09-30",
     "start_station": "東日本旅客鉄道 東海道線 東京",
@@ -118,7 +120,10 @@
     "pass_number": "012345",
     "r_number": "001",
     "sale_price": 45240,
-    "issued_at": "2025-03-20"
+    "purchase_pay_type_code": 2,
+    "purchase_pay_type": "VIEW",
+    "issued_at": "2025-03-20",
+    "commuter_certificate_expiry": "—"
   },
   "auto_charge": {
     "contracted": true,

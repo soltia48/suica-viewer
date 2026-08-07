@@ -580,6 +580,7 @@
             "定期券情報",
             hasCommuter(cm)
               ? kvGrid([
+                  ["発行事業者", cm.issuer_id],
                   ["開始日", cm.valid_from],
                   ["終了日", cm.valid_to],
                   ["始点駅", cm.start_station],
@@ -587,9 +588,13 @@
                   ["経由駅1", cm.via1_station],
                   ["経由駅2", cm.via2_station],
                   ["券番", cm.pass_number],
-                  ["R通番", cm.r_number],
                   ["発売額", yen(cm.sale_price)],
+                  ["購入時支払方法", cm.purchase_pay_type],
+                  ["R通番", cm.r_number],
                   ["発行日", cm.issued_at],
+                  ...(cm.commuter_certificate_expiry && cm.commuter_certificate_expiry !== "—"
+                    ? [["通学証明書省略期限", cm.commuter_certificate_expiry]]
+                    : []),
                 ])
               : el("div", { class: "empty", text: "定期券なし" }),
           ),
