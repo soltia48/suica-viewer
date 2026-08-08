@@ -12,7 +12,7 @@ use crate::auth_client::{AuthClient, AuthError};
 use crate::card::{CardError, CardSession};
 use crate::station_codes::StationCodeLookup;
 use crate::utils::{
-    SYSTEM_CODE, card_type_label, equipment_type_to_str, format_birth_date, format_date,
+    SYSTEM_CODE, equipment_type_to_str, format_birth_date, format_date,
     format_station, format_time, gate_in_out_type_to_str, gate_instruction_type_to_str,
     idi_bytes_to_str, intermediate_gate_instruction_type_to_str, issuer_id_to_str, pay_type_to_str,
     transaction_type_to_str,
@@ -35,11 +35,12 @@ pub const AREA_NODE_IDS: [u16; 5] = [0x0000, 0x0040, 0x0800, 0x0FC0, 0x1000];
 /// The order is not cosmetic: FeliCa requires every key-requiring node to be
 /// listed before any key-free one, so the four keyed services come first.
 /// Address a service by the `*_SERVICE` index below rather than by position.
-pub const SERVICE_NODE_IDS: [u16; 8] = [
+pub const SERVICE_NODE_IDS: [u16; 9] = [
     // Key-requiring (Random/Purse read-only with key).
     0x004A, // 発行情報
     0x0816, // その他（用途未確定）
     0x08CA, // 最終チャージ情報
+    0x100A, // 拡張情報（定期券番・定期発売額・オートチャージ等）
     0x104A, // 定期情報
     // Key-free (Random/Cyclic read-only without key).
     0x008B, // 属性情報
@@ -53,11 +54,12 @@ pub const SERVICE_NODE_IDS: [u16; 8] = [
 const ISSUE_SERVICE: u8 = 0;
 const MISC_SERVICE: u8 = 1;
 const TOPUP_SERVICE: u8 = 2;
-const COMMUTER_SERVICE: u8 = 3;
-const ATTRIBUTE_SERVICE: u8 = 4;
-const HISTORY_SERVICE: u8 = 5;
-const GATE_SERVICE: u8 = 6;
-const SF_GATE_SERVICE: u8 = 7;
+const EXTENDED_SERVICE: u8 = 3;
+const COMMUTER_SERVICE: u8 = 4;
+const ATTRIBUTE_SERVICE: u8 = 5;
+const HISTORY_SERVICE: u8 = 6;
+const GATE_SERVICE: u8 = 7;
+const SF_GATE_SERVICE: u8 = 8;
 
 /// Paid-ticket / express-gate service (料金発券・改札情報), read-only variant.
 /// Not present on every card, so it is probed and appended to the authenticated
@@ -134,11 +136,11 @@ pub struct IssuePrimary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attribute {
-    pub card_type_code: u8,
-    pub card_type: String,
-    pub region: u8,
     pub balance: u16,
     pub transaction_number: u16,
+    pub voice_guidance: bool,
+    pub sf_outside_commuter: bool,
+    pub touch_de_go: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,6 +186,8 @@ pub struct TransactionEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Commuter {
+    pub issuer_id: String,
+    pub issuer_id_hex: String,
     pub valid_from: String,
     pub valid_to: String,
     pub start_station: String,
@@ -191,6 +195,13 @@ pub struct Commuter {
     pub via1_station: String,
     pub via2_station: String,
     pub issued_at: String,
+    pub pass_number: String,
+    pub r_number: String,
+    pub sale_price: u32,
+    pub purchase_pay_type_code: u8,
+    pub purchase_pay_type: String,
+    /// 通学証明書省略期限。学生定期のみ。非該当時は `"—"`.
+    pub commuter_certificate_expiry: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +234,14 @@ pub struct SfGate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoCharge {
+    pub contracted: bool,
+    pub enabled: bool,
+    pub charge_amount: u16,
+    pub threshold: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaidTicketEntry {
     pub index: usize,
     pub depart_station: String,
@@ -247,6 +266,7 @@ pub struct CardData {
     pub unknown: UnknownInfo,
     pub transaction_history: Vec<TransactionEntry>,
     pub commuter: Commuter,
+    pub auto_charge: AutoCharge,
     pub gate: Vec<GateEntry>,
     pub sf_gate: SfGate,
     #[serde(default)]
@@ -314,8 +334,26 @@ fn describe_read_failure(error: &CardError) -> String {
 // Block decoding                                                              //
 // --------------------------------------------------------------------------- //
 
+/// 定期券・企画券の購入支払種別。取引履歴の `pay_type` と同じコード体系だが
+/// 0x3F は「クレジットカード」の意味で使われる。
+fn purchase_pay_type_to_str(code: u8) -> String {
+    if code == 0x3F {
+        return "クレジットカード".to_string();
+    }
+    pay_type_to_str(code)
+}
+
 fn be16(block: &Block, offset: usize) -> u16 {
     u16::from_be_bytes([block[offset], block[offset + 1]])
+}
+
+fn decode_bcd(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        s.push(char::from(b'0' + (b >> 4)));
+        s.push(char::from(b'0' + (b & 0x0F)));
+    }
+    s
 }
 
 fn le16(block: &Block, offset: usize) -> u16 {
@@ -385,14 +423,14 @@ impl Decoder<'_> {
     fn attribute(&self, blocks: &[Block]) -> Result<Attribute> {
         require(blocks, 1, "属性情報")?;
         let block = &blocks[0];
-        let card_type_code = block[8] >> 4;
+        let settings = block[8];
 
         Ok(Attribute {
-            card_type_code,
-            card_type: card_type_label(card_type_code).to_string(),
-            region: block[8] & 0x0F,
             balance: le16(block, 11),
             transaction_number: be16(block, 14),
+            voice_guidance: (settings & 0x10) != 0,
+            sf_outside_commuter: (settings & 0x20) != 0,
+            touch_de_go: (settings & 0x04) != 0,
         })
     }
 
@@ -470,11 +508,20 @@ impl Decoder<'_> {
         entries
     }
 
-    fn commuter(&self, blocks: &[Block]) -> Result<Commuter> {
+    fn commuter(&self, blocks: &[Block], extended_blocks: &[Block]) -> Result<Commuter> {
         require(blocks, 3, "定期情報")?;
+        require(extended_blocks, 10, "拡張情報")?;
         let (primary, supplemental) = (&blocks[0], &blocks[2]);
 
+        let pass_number_bytes = [
+            extended_blocks[0][15],
+            extended_blocks[1][0],
+            extended_blocks[1][1],
+        ];
+        let issuer_id_hex = hex::encode_upper(&extended_blocks[0][0..2]);
         Ok(Commuter {
+            issuer_id: issuer_id_to_str(&issuer_id_hex),
+            issuer_id_hex,
             valid_from: format_date(be16(primary, 0)),
             valid_to: format_date(be16(primary, 2)),
             start_station: self.station(primary[8], primary[9]),
@@ -482,7 +529,32 @@ impl Decoder<'_> {
             via1_station: self.station(primary[12], primary[13]),
             via2_station: self.station(primary[14], primary[15]),
             issued_at: format_date(be16(supplemental, 5)),
+            pass_number: decode_bcd(&pass_number_bytes),
+            r_number: decode_bcd(&extended_blocks[1][10..12])
+                .chars()
+                .skip(1)
+                .collect(),
+            sale_price: u32::from_le_bytes([
+                extended_blocks[1][7],
+                extended_blocks[1][8],
+                extended_blocks[1][9],
+                0,
+            ]),
+            purchase_pay_type_code: extended_blocks[1][6],
+            purchase_pay_type: purchase_pay_type_to_str(extended_blocks[1][6]),
+            commuter_certificate_expiry: format_date(be16(&extended_blocks[5], 10)),
         })
+    }
+
+    fn auto_charge(block: &Block) -> AutoCharge {
+        let byte0 = block[0];
+        let byte1 = block[1];
+        AutoCharge {
+            contracted: (byte0 >> 7) & 1 == 1,
+            enabled: (byte0 >> 6) & 1 == 1,
+            charge_amount: u16::from(byte0 & 0x0F) * 1000,
+            threshold: u16::from((byte1 >> 2) & 0x0F) * 1000,
+        }
     }
 
     fn gate(&self, blocks: &[Block]) -> Vec<GateEntry> {
@@ -675,7 +747,10 @@ impl CardDataService {
             decoder.transaction_history(&read_blocks(card, HISTORY_SERVICE, 20)?);
         report(85.0);
 
-        let commuter = decoder.commuter(&read_blocks(card, COMMUTER_SERVICE, 3)?)?;
+        let commuter_blocks = read_blocks(card, COMMUTER_SERVICE, 3)?;
+        let extended_blocks = read_blocks(card, EXTENDED_SERVICE, 10)?;
+        let commuter = decoder.commuter(&commuter_blocks, &extended_blocks)?;
+        let auto_charge = Decoder::auto_charge(&extended_blocks[9]);
         report(92.0);
 
         let gate = decoder.gate(&read_blocks(card, GATE_SERVICE, 3)?);
@@ -708,6 +783,7 @@ impl CardDataService {
             unknown,
             transaction_history,
             commuter,
+            auto_charge,
             gate,
             sf_gate,
             paid_ticket,
@@ -794,6 +870,7 @@ mod tests {
             (ISSUE_SERVICE, 0x004A),
             (MISC_SERVICE, 0x0816),
             (TOPUP_SERVICE, 0x08CA),
+            (EXTENDED_SERVICE, 0x100A),
             (COMMUTER_SERVICE, 0x104A),
             (ATTRIBUTE_SERVICE, 0x008B),
             (HISTORY_SERVICE, 0x090F),
@@ -806,7 +883,7 @@ mod tests {
             );
         }
         // Every service in the list is reachable by exactly one named index.
-        assert_eq!(SERVICE_NODE_IDS.len(), 8);
+        assert_eq!(SERVICE_NODE_IDS.len(), 9);
     }
 
     /// The full node list, including the paid-ticket service appended last.
@@ -953,7 +1030,7 @@ mod tests {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
         let one = vec![[0u8; DATA_BLOCK_SIZE]];
         assert!(decoder(&stations).issue_primary(&one).is_err());
-        assert!(decoder(&stations).commuter(&one).is_err());
+        assert!(decoder(&stations).commuter(&one, &one).is_err());
         assert!(decoder(&stations).sf_gate(&one).is_err());
         assert!(decoder(&stations).attribute(&[]).is_err());
     }
@@ -962,7 +1039,9 @@ mod tests {
     fn commuter_presence_keys_off_the_start_date() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
         let blocks = vec![[0u8; DATA_BLOCK_SIZE]; 3];
-        let commuter = decoder(&stations).commuter(&blocks).unwrap();
+        let extended = vec![[0u8; DATA_BLOCK_SIZE]; 10];
+        let commuter = decoder(&stations).commuter(&blocks, &extended).unwrap();
         assert_eq!(commuter.valid_from, "—");
+        assert_eq!(commuter.commuter_certificate_expiry, "—");
     }
 }

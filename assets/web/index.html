@@ -481,9 +481,7 @@
           el("div", {
             class: "sub",
             text: c
-              ? [c.attribute.card_type, c.issue_primary.issuer_id]
-                  .filter(hasValue)
-                  .join("  ·  ") || "カード読取済み"
+              ? c.issue_primary.issuer_id || "カード読取済み"
               : "カードをかざしてください",
           }),
           c?.issue_primary?.collected
@@ -507,7 +505,6 @@
               ["PMm", c.system.pmm_hex],
               ["IDi", c.system.idi_display],
               ["PMi", c.system.pmi],
-              ["カード種別", c.attribute.card_type],
               ["発行者", c.issue_primary.issuer_id],
             ]),
           ),
@@ -591,18 +588,19 @@
               ["取り込み済み", i.collected ? "はい（無効カード）" : "いいえ"],
             ]),
           ),
-          card(
-            "カード属性",
-            kvGrid([
-              ["カード種別", a.card_type],
-              [
-                "地域",
-                `${a.region} (0x${a.region.toString(16).padStart(2, "0").toUpperCase()})`,
-              ],
-              ["残高", yen(a.balance)],
-              ["取引通番", a.transaction_number?.toLocaleString("ja-JP")],
-            ]),
-          ),
+          (() => {
+            const u = (v) => (v ? "利用する" : "利用しない");
+            return card(
+              "カード属性",
+              kvGrid([
+                ["残高", yen(a.balance)],
+                ["取引通番", a.transaction_number?.toLocaleString("ja-JP")],
+                ["音声案内サービス", u(a.voice_guidance)],
+                ["定期有効期間外のSF利用", u(a.sf_outside_commuter)],
+                ["タッチでGo！新幹線", u(a.touch_de_go)],
+              ]),
+            );
+          })(),
           card(
             "最終チャージ情報",
             kvGrid([
@@ -615,16 +613,37 @@
             "定期券情報",
             hasCommuter(cm)
               ? kvGrid([
+                  ["発行事業者", cm.issuer_id],
                   ["開始日", cm.valid_from],
                   ["終了日", cm.valid_to],
                   ["始点駅", cm.start_station],
                   ["終点駅", cm.end_station],
                   ["経由駅1", cm.via1_station],
                   ["経由駅2", cm.via2_station],
+                  ["券番", cm.pass_number],
+                  ["発売額", yen(cm.sale_price)],
+                  ["購入時支払方法", cm.purchase_pay_type],
+                  ["R通番", cm.r_number],
                   ["発行日", cm.issued_at],
+                  ...(cm.commuter_certificate_expiry && cm.commuter_certificate_expiry !== "—"
+                    ? [["通学証明書省略期限", cm.commuter_certificate_expiry]]
+                    : []),
                 ])
               : el("div", { class: "empty", text: "定期券なし" }),
           ),
+          (() => {
+            const ac = c.auto_charge;
+            const yesNo = (v) => (v ? "有" : "無");
+            const rows = [
+              ["契約", yesNo(ac.contracted)],
+              ["有効", yesNo(ac.enabled)],
+            ];
+            if (ac.contracted) {
+              rows.push(["チャージ額", yen(ac.charge_amount)]);
+              rows.push(["しきい値", yen(ac.threshold)]);
+            }
+            return card("オートチャージ", kvGrid(rows));
+          })(),
         );
         root.append(cols);
       }

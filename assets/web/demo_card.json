@@ -23,11 +23,11 @@
     "collected": false
   },
   "attribute": {
-    "card_type_code": 2,
-    "card_type": "Suica/PiTaPa/TOICA/PASMO",
-    "region": 2,
     "balance": 3820,
-    "transaction_number": 184
+    "transaction_number": 184,
+    "voice_guidance": true,
+    "sf_outside_commuter": true,
+    "touch_de_go": false
   },
   "last_topup": {
     "equipment_code": 22,
@@ -110,13 +110,27 @@
     }
   ],
   "commuter": {
+    "issuer_id": "0103 (東日本旅客鉄道株式会社 / JE)",
+    "issuer_id_hex": "0103",
     "valid_from": "2025-04-01",
     "valid_to": "2025-09-30",
     "start_station": "東日本旅客鉄道 東海道線 東京",
     "end_station": "東日本旅客鉄道 東海道線 新橋",
     "via1_station": "東日本旅客鉄道 東海道線 有楽町",
     "via2_station": "不明 (線区コード: 0x00, 駅順コード: 0x00)",
-    "issued_at": "2025-03-20"
+    "pass_number": "012345",
+    "r_number": "001",
+    "sale_price": 45240,
+    "purchase_pay_type_code": 2,
+    "purchase_pay_type": "VIEW",
+    "issued_at": "2025-03-20",
+    "commuter_certificate_expiry": "—"
+  },
+  "auto_charge": {
+    "contracted": true,
+    "enabled": true,
+    "charge_amount": 3000,
+    "threshold": 2000
   },
   "gate": [
     {

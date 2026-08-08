@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use suica_viewer::card::SharedDriver;
 use suica_viewer::card_data::{CardData, GateEntry, PaidTicketEntry, TransactionEntry};
-use suica_viewer::utils::{format_region, format_yen, thousands};
+use suica_viewer::utils::{format_yen, thousands};
 use suica_viewer::{
     AuthClient, CardDataService, CardSession, SYSTEM_CODE, StationCodeLookup, reader,
     resolve_server_url,
@@ -205,6 +205,7 @@ impl TextReport {
         }
         self.transaction_history(card);
         self.commuter_pass(card);
+        self.auto_charge(card);
         self.gate_history(card);
         self.sf_gate(card);
         self.paid_ticket(card);
@@ -275,7 +276,6 @@ impl TextReport {
         self.lines.push(String::new());
         let mut pairs = vec![
             ("残高", balance),
-            ("カード種別", card.attribute.card_type.clone()),
             ("発行者", card.issue_primary.issuer_id.clone()),
             ("有効期限", card.issue_primary.expires_at.clone()),
         ];
@@ -329,18 +329,17 @@ impl TextReport {
         let attribute = &card.attribute;
         self.section("属性情報");
 
-        let mut pairs = vec![
-            ("カード種別", attribute.card_type.clone()),
+        let use_str = |v: bool| if v { "利用する" } else { "利用しない" };
+        self.key_values(&[
             ("残高", format_yen(i64::from(attribute.balance))),
             (
                 "取引通番",
                 thousands(i64::from(attribute.transaction_number)),
             ),
-        ];
-        if self.verbose {
-            pairs.push(("地域コード", format_region(attribute.region)));
-        }
-        self.key_values(&pairs);
+            ("音声案内サービス", use_str(attribute.voice_guidance).to_string()),
+            ("定期有効期間外のSF利用", use_str(attribute.sf_outside_commuter).to_string()),
+            ("タッチでGo！新幹線", use_str(attribute.touch_de_go).to_string()),
+        ]);
     }
 
     fn last_topup(&mut self, card: &CardData) {
@@ -404,10 +403,13 @@ impl TextReport {
         }
 
         let commuter = &card.commuter;
-        let mut pairs = vec![(
-            "区間",
-            format!("{} → {}", commuter.start_station, commuter.end_station),
-        )];
+        let mut pairs = vec![
+            ("発行事業者", commuter.issuer_id.clone()),
+            (
+                "区間",
+                format!("{} → {}", commuter.start_station, commuter.end_station),
+            ),
+        ];
 
         let vias: Vec<&str> = [
             clean_station(Some(&commuter.via1_station)),
@@ -424,7 +426,29 @@ impl TextReport {
             "有効期間",
             format!("{} 〜 {}", commuter.valid_from, commuter.valid_to),
         ));
+        pairs.push(("券番", commuter.pass_number.clone()));
+        pairs.push(("発売額", format_yen(i64::from(commuter.sale_price))));
+        pairs.push(("購入時支払方法", commuter.purchase_pay_type.clone()));
+        pairs.push(("R通番", commuter.r_number.clone()));
         pairs.push(("発行日", commuter.issued_at.clone()));
+        if commuter.commuter_certificate_expiry != "—" {
+            pairs.push(("通学証明書省略期限", commuter.commuter_certificate_expiry.clone()));
+        }
+        self.key_values(&pairs);
+    }
+
+    fn auto_charge(&mut self, card: &CardData) {
+        self.section("オートチャージ");
+        let ac = &card.auto_charge;
+        let yes_no = |v: bool| if v { "有" } else { "無" };
+        let mut pairs = vec![
+            ("契約", yes_no(ac.contracted).to_string()),
+            ("有効", yes_no(ac.enabled).to_string()),
+        ];
+        if ac.contracted {
+            pairs.push(("チャージ額", yen_compact(ac.charge_amount)));
+            pairs.push(("しきい値", yen_compact(ac.threshold)));
+        }
         self.key_values(&pairs);
     }
 
