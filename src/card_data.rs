@@ -12,9 +12,9 @@ use crate::auth_client::{AuthClient, AuthError};
 use crate::card::{CardError, CardSession};
 use crate::station_codes::StationCodeLookup;
 use crate::utils::{
-    SYSTEM_CODE, equipment_type_to_str, format_birth_date, format_date,
-    format_station, format_time, gate_in_out_type_to_str, gate_instruction_type_to_str,
-    idi_bytes_to_str, intermediate_gate_instruction_type_to_str, issuer_id_to_str, pay_type_to_str,
+    SYSTEM_CODE, equipment_type_to_str, format_birth_date, format_date, format_station,
+    format_time, gate_in_out_type_to_str, gate_instruction_type_to_str, idi_bytes_to_str,
+    intermediate_gate_instruction_type_to_str, issuer_id_to_str, pay_type_to_str,
     transaction_type_to_str,
 };
 

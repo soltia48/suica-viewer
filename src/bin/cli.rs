@@ -336,9 +336,18 @@ impl TextReport {
                 "取引通番",
                 thousands(i64::from(attribute.transaction_number)),
             ),
-            ("音声案内サービス", use_str(attribute.voice_guidance).to_string()),
-            ("定期有効期間外のSF利用", use_str(attribute.sf_outside_commuter).to_string()),
-            ("タッチでGo！新幹線", use_str(attribute.touch_de_go).to_string()),
+            (
+                "音声案内サービス",
+                use_str(attribute.voice_guidance).to_string(),
+            ),
+            (
+                "定期有効期間外のSF利用",
+                use_str(attribute.sf_outside_commuter).to_string(),
+            ),
+            (
+                "タッチでGo！新幹線",
+                use_str(attribute.touch_de_go).to_string(),
+            ),
         ]);
     }
 
@@ -432,7 +441,10 @@ impl TextReport {
         pairs.push(("R通番", commuter.r_number.clone()));
         pairs.push(("発行日", commuter.issued_at.clone()));
         if commuter.commuter_certificate_expiry != "—" {
-            pairs.push(("通学証明書省略期限", commuter.commuter_certificate_expiry.clone()));
+            pairs.push((
+                "通学証明書省略期限",
+                commuter.commuter_certificate_expiry.clone(),
+            ));
         }
         self.key_values(&pairs);
     }
