@@ -5,7 +5,7 @@
 //! driver layer surfaces them as text, so the cause is recovered from the
 //! message and paired with the fix for the current platform.
 
-use felica_rs::DriverError;
+use felica::DriverError;
 
 pub const ZADIG_URL: &str = "https://zadig.akeo.ie/";
 

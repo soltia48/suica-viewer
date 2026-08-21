@@ -1,19 +1,20 @@
 # Suica Viewer
 
-Suica Viewer is a tool for retrieving, displaying, and saving detailed information from FeliCa-based transit IC cards. It uses a remote authentication server to read encrypted areas and offers two entry points: a console-oriented CLI and a local web GUI.
+Suica Viewer is a tool for retrieving, displaying, and saving detailed information from FeliCa-based transit IC cards. It uses a remote authentication server to read encrypted areas and offers a Tauri desktop app plus a console-oriented CLI.
 
-Reader control and the FeliCa protocol are provided by [felica-rs](https://github.com/soltia48/felica-rs).
+Reader control and the FeliCa protocol are provided by [felica](https://github.com/soltia48/felica-rs).
 
 ## Key Features
 - Mutual authentication with a remote server to read encrypted areas
-- CLI version: formatted text output for issuance data, balance, history, commuter pass details, and more
-- Web GUI version: visual viewer with tabs for Overview, Card Info, Transaction History, Gates, and Data; includes history filtering and JSON copy/save actions
+- Desktop app: a Preact interface with tabs for Overview, Card Info, Transaction History, Gates, and Data; includes history filtering and JSON/CSV export
+- CLI: formatted text output for issuance data, balance, history, commuter pass details, and more
 - Resolves company, line, and station names from `station_codes.csv`, which is compiled into the executable
 - Switch authentication servers via the `AUTH_SERVER_URL` environment variable (default: `https://felica-auth.nyaa.ws`)
 
 ## Requirements
-- [Rust](https://www.rust-lang.org/) 1.85 or later, to build from source (the crate uses edition 2024)
-- A FeliCa reader/writer supported by felica-rs
+- [Rust](https://www.rust-lang.org/) 1.88 or later, to build from source (the crate uses edition 2024)
+- [Node.js](https://nodejs.org/) 20.19 or later (or 22.12 or later) and npm, to build the Preact front end
+- A FeliCa reader/writer supported by felica
 
 | Device | VID:PID |
 | --- | --- |
@@ -28,7 +29,7 @@ Reader control and the FeliCa protocol are provided by [felica-rs](https://githu
 ## Installation
 
 ### Prebuilt executables
-Every release ships standalone executables for `suica-viewer` and `suica-viewer-web`. The station dataset and the web UI are embedded in the binaries, so there are no extra files to install. Download the file matching your platform from the [Releases](../../releases) page, alongside `SHA256SUMS.txt` to verify it.
+Every release ships the `suica-viewer` desktop app and the `suica-viewer-cli` console program. The station dataset and Preact UI are embedded in the binaries, so there are no extra files to install. Download the files matching your platform from the [Releases](../../releases) page, alongside `SHA256SUMS.txt` to verify them.
 
 | Platform | Asset suffix |
 | --- | --- |
@@ -44,14 +45,16 @@ You still need to set up the reader driver. See [Reader Driver Setup](#reader-dr
 ### From source
 
 ```bash
-cargo build --release
-# Artifacts: target/release/suica-viewer, target/release/suica-viewer-web
+npm ci --prefix ui
+npm exec --prefix ui -- tauri build --no-bundle
+cargo build --release --locked --bin suica-viewer-cli
+# Artifacts: target/release/suica-viewer, target/release/suica-viewer-cli
 ```
 
-`rusb` builds libusb from source, so there is no separate libusb install. On Linux it links against libudev for device enumeration, so install `libudev-dev` (Debian/Ubuntu) first.
+`rusb` builds libusb from source, so there is no separate libusb install. Linux builds need the [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux) plus `libudev-dev` for reader enumeration.
 
 ## Reader Driver Setup
-felica-rs talks to the reader through libusb, which needs a driver it can claim the USB device with.
+felica talks to the reader through libusb, which needs a driver it can claim the USB device with.
 
 **Windows.** By default Windows binds its own driver to the reader and libusb cannot open it. Use [Zadig](https://zadig.akeo.ie/) to replace the reader's driver with **WinUSB**. Once replaced, vendor software (such as Sony's NFC Port Software) cannot use the reader until you restore the original driver from Device Manager.
 
@@ -74,9 +77,9 @@ Without the rule you have to run as root.
 3. Run the command below and tap a card; the details are printed to the console.
 
 ```bash
-suica-viewer
+suica-viewer-cli
 # Example:
-# AUTH_SERVER_URL=https://example.com suica-viewer
+# AUTH_SERVER_URL=https://example.com suica-viewer-cli
 ```
 
 Output leads with a balance summary and is formatted as colored tables. Color is disabled automatically when stdout is not a TTY or `NO_COLOR` is set.
@@ -95,25 +98,22 @@ Main output sections
 - Commuter pass info, gate entry/exit records, SF gate entry records
 - Paid-ticket / express-gate records (service `0x184B`) — probed and read only when the card carries it. Cards without it, or servers without the matching key, are skipped without affecting anything else.
 
-## Usage (Web GUI)
-A browser can neither reach a USB reader nor relay the mutual authentication, so `suica-viewer-web` runs a local server that owns the reader and streams card data to the page over Server-Sent Events.
+## Usage (Desktop App)
+The Tauri process owns the USB reader and streams card data to the embedded Preact interface over a local IPC channel. It does not start an HTTP server or expose card data over the network.
 
 ```bash
-suica-viewer-web
-# Opens http://127.0.0.1:8765/ in your browser by default
+suica-viewer
 ```
 
 - Cards are detected automatically and the page updates live, with no reload. Includes the balance hero card, tabbed layout, sortable transaction history with per-transaction deltas, gate tables, JSON/CSV export, and light/dark themes.
 - Removing the card from the reader clears the page and waits for the next one.
-- Binds to `127.0.0.1` only by default. `--host 0.0.0.0` exposes it to the LAN — note that card data then travels over the network.
+- The app opens in its own native window and keeps the reader work off the UI thread.
 
 Options
 
 | Flag | Description |
 | --- | --- |
-| `--host` / `--port` | Bind address (default `127.0.0.1:8765`) |
 | `--server URL` | Authentication server URL (takes precedence over `AUTH_SERVER_URL`) |
-| `--no-browser` | Do not open a browser on startup |
 | `--demo` | Preview the UI with a built-in sample card, without a reader |
 
 ## Authentication Server
@@ -158,9 +158,10 @@ FeliCa requires every key-requiring node to be listed before any key-free one, w
 Set `RUST_LOG=debug` for verbose logging, including the frames exchanged with the card.
 
 ## Development Notes
-- Format, lint, and test: `cargo fmt --all` / `cargo clippy --all-targets` / `cargo test`
-- To check the web UI without a reader: `cargo run --bin suica-viewer-web -- --demo`
-- Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds every platform and attaches the executables to a GitHub Release.
+- Install UI dependencies once with `npm ci --prefix ui`.
+- Start the Tauri app in demo mode with `npm exec --prefix ui -- tauri dev -- -- --demo`.
+- Check the front end with `npm --prefix ui run build`; format, lint, and test Rust with `cargo fmt --all`, `cargo clippy --workspace --all-targets`, and `cargo test --workspace`.
+- Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds every platform and attaches the desktop app and CLI to a GitHub Release.
 
 ## Author
 

@@ -17,11 +17,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use felica_rs::felica_standard::{
+use felica::felica_standard::{
     AuthenticatedContext, BlockListElement, FelicaDriver, FelicaStandard, FelicaStandardCommand,
     SecureSessionCredentials, ServiceCode, Type3TagPollingResult,
 };
-use felica_rs::{DriverError, FelicaStandardError, RemoteTarget};
+use felica::{DriverError, FelicaStandardError, RemoteTarget};
 
 /// FeliCa bitrates to poll at. 424F is preferred and 212F is the fallback.
 const BITRATES: [&str; 2] = ["212F", "424F"];

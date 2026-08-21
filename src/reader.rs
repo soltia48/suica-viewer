@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use felica_rs::{Reader, ReaderPreference, open_reader};
+use felica::{Reader, ReaderPreference, open_reader};
 
 use crate::reader_errors::describe_reader_error;
 

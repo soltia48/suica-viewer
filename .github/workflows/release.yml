@@ -35,22 +35,39 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
 
-      # rusb builds its own copy of libusb, but links against libudev on Linux
-      # for device enumeration.
+      # Tauri needs WebKitGTK and the reader needs libudev on Linux.
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libudev-dev
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libudev-dev
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
 
       - name: Build executables
-        run: cargo build --release --locked
+        run: npm exec --prefix ui -- tauri build --no-bundle
 
-      # Both binaries are self-contained: the station dataset and the web UI are
+      - name: Build CLI
+        run: cargo build --release --locked --bin suica-viewer-cli
+
+      # Both binaries are self-contained: the station dataset and Preact UI are
       # compiled in, so there is nothing to ship alongside them.
       - name: Stage release assets
         shell: bash
@@ -60,7 +77,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; else ext=""; fi
           mkdir -p dist
-          for name in suica-viewer suica-viewer-web; do
+          for name in suica-viewer suica-viewer-cli; do
             cp "target/release/${name}${ext}" "dist/${name}-${VERSION}-${TARGET}${ext}"
           done
 

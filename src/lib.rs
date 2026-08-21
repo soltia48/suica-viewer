@@ -2,7 +2,7 @@
 //!
 //! The card's encrypted areas can only be read after a mutual authentication
 //! whose keys live on a remote server, so a read is a three-way conversation:
-//! this crate polls the card with [`felica_rs`], relays the server's frames to
+//! this crate polls the card with [`felica`], relays the server's frames to
 //! it, and decodes the blocks that come back.
 //!
 //! - [`card`] — the polled card and the raw frame relay

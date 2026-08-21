@@ -5,7 +5,7 @@
 //! stable.
 
 use encoding_rs::SHIFT_JIS;
-use felica_rs::FelicaStandardError;
+use felica::FelicaStandardError;
 use serde::{Deserialize, Serialize};
 
 use crate::auth_client::{AuthClient, AuthError};
@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn every_authenticated_service_is_read_only() {
-        use felica_rs::felica_standard::ServiceCode;
+        use felica::felica_standard::ServiceCode;
 
         // Read-only service attributes, per the FeliCa service definition. A
         // read/write code here would earn a session key that could modify the
@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn the_service_list_is_ordered_the_way_the_card_requires() {
-        use felica_rs::felica_standard::ServiceCode;
+        use felica::felica_standard::ServiceCode;
 
         // A FeliCa service list must name at least one key-requiring node, and
         // every key-requiring node has to precede the key-free ones.

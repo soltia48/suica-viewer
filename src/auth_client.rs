@@ -267,10 +267,10 @@ impl AuthClient {
             return Err(AuthError::Server(format!("HTTP {status}: {body}")));
         }
 
-        if let Some(session_id) = object.get("session_id").and_then(Value::as_str) {
-            if !session_id.is_empty() {
-                self.session_id = Some(session_id.to_string());
-            }
+        if let Some(session_id) = object.get("session_id").and_then(Value::as_str)
+            && !session_id.is_empty()
+        {
+            self.session_id = Some(session_id.to_string());
         }
 
         Ok(object)

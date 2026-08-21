@@ -23,20 +23,37 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
       - uses: Swatinem/rust-cache@v2
 
-      # rusb builds its own copy of libusb, but links against libudev on Linux
-      # for device enumeration.
+      # Tauri needs WebKitGTK and the reader needs libudev on Linux.
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libudev-dev
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libudev-dev
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      - name: Build Preact frontend
+        run: npm --prefix ui run build
 
       - name: Check formatting
         run: cargo fmt --all --check
 
       - name: Lint
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --workspace --locked

@@ -1,23 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["src-tauri"]
+
 [package]
 name = "suica-viewer"
-version = "2.0.1"
+version = "3.0.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "FeliCa 交通系ICカードの詳細情報を読み取って表示するビューア"
 authors = ["KIRISHIKI Yudai <yudai.kirishiki@protonmail.com>"]
 license = "MIT"
 readme = "README.md"
+default-run = "suica-viewer-cli"
 
 [[bin]]
-name = "suica-viewer"
+name = "suica-viewer-cli"
 path = "src/bin/cli.rs"
 
-[[bin]]
-name = "suica-viewer-web"
-path = "src/bin/web.rs"
-
 [dependencies]
-felica-rs = { git = "https://github.com/soltia48/felica-rs.git" }
+felica = "1.0"
 
 # Card reading / decoding
 encoding_rs = "0.8"
@@ -43,13 +44,6 @@ chrono = { version = "0.4", default-features = false, features = [
 # CLI
 clap = { version = "4", features = ["derive"] }
 unicode-width = "0.2"
-
-# Web GUI
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
-futures-util = "0.3"
-webbrowser = "1"
 
 log = "0.4"
 env_logger = "0.11"

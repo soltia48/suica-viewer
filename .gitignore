@@ -1,5 +1,7 @@
 # Rust build artifacts
 /target/
+/ui/node_modules/
+/ui/dist/
 
 # Coverage / profiling output
 *.profraw

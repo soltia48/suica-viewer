@@ -1,19 +1,20 @@
 # Suica Viewer
 
-Suica Viewer は、FeliCa ベースの交通系 IC カードから詳細な情報を取得し、表示・保存するためのツールです。暗号領域の読み出しにはリモート認証サーバーを利用し、コンソール向け CLI とローカル Web GUI の 2 つのエントリーポイントを提供します。
+Suica Viewer は、FeliCa ベースの交通系 IC カードから詳細な情報を取得し、表示・保存するためのツールです。暗号領域の読み出しにはリモート認証サーバーを利用し、Tauri デスクトップアプリとコンソール向け CLI を提供します。
 
-リーダー制御と FeliCa プロトコルの実装には [felica-rs](https://github.com/soltia48/felica-rs) を使用しています。
+リーダー制御と FeliCa プロトコルの実装には [felica](https://github.com/soltia48/felica-rs) を使用しています。
 
 ## 主な機能
 - リモートサーバー経由での相互認証と暗号領域読み出し
+- デスクトップアプリ: Preact 製の概要／カード情報／取引履歴／改札／データ画面、履歴フィルタ、JSON・CSV 出力
 - CLI 版: 発行情報・残高・履歴・定期券情報などをテキストで整形出力
-- Web GUI 版: 概要／カード情報／取引履歴／改札／データの各タブを備えたビジュアルビューア、履歴フィルタ、JSON のコピー・保存機能
 - `station_codes.csv` に基づく会社名・路線名・駅名の解決（実行ファイルに同梱）
 - `AUTH_SERVER_URL` 環境変数での認証サーバーの切り替え（既定: `https://felica-auth.nyaa.ws`）
 
 ## 必要環境
-- [Rust](https://www.rust-lang.org/) 1.85 以降（ソースからビルドする場合。edition 2024 を使用）
-- felica-rs が対応している FeliCa リーダー／ライター
+- [Rust](https://www.rust-lang.org/) 1.88 以降（ソースからビルドする場合。edition 2024 を使用）
+- [Node.js](https://nodejs.org/) 20.19 以降（または 22.12 以降）と npm（Preact フロントエンドのビルドに使用）
+- felica が対応している FeliCa リーダー／ライター
 
 | デバイス | VID:PID |
 | --- | --- |
@@ -28,7 +29,7 @@ Suica Viewer は、FeliCa ベースの交通系 IC カードから詳細な情�
 ## インストール
 
 ### ビルド済み実行ファイル
-リリースごとに `suica-viewer` と `suica-viewer-web` の単体実行ファイルを配布しています。駅コードデータと Web UI は実行ファイルに埋め込まれているため、追加ファイルは不要です。[Releases](../../releases) から環境に合うファイルを、検証用の `SHA256SUMS.txt` とあわせてダウンロードしてください。
+リリースごとにデスクトップアプリ `suica-viewer` とコンソール版 `suica-viewer-cli` を配布しています。駅コードデータと Preact UI は実行ファイルに埋め込まれているため、追加ファイルは不要です。[Releases](../../releases) から環境に合うファイルを、検証用の `SHA256SUMS.txt` とあわせてダウンロードしてください。
 
 | 環境 | ファイル名の末尾 |
 | --- | --- |
@@ -44,14 +45,16 @@ macOS 版は署名していないため、初回起動時に Gatekeeper がブ�
 ### ソースから
 
 ```bash
-cargo build --release
-# 成果物: target/release/suica-viewer, target/release/suica-viewer-web
+npm ci --prefix ui
+npm exec --prefix ui -- tauri build --no-bundle
+cargo build --release --locked --bin suica-viewer-cli
+# 成果物: target/release/suica-viewer, target/release/suica-viewer-cli
 ```
 
-libusb 本体は `rusb` がソースからビルドするため、別途インストールする必要はありません。Linux では列挙のために libudev を参照するので、`libudev-dev`（Debian/Ubuntu）を入れておいてください。
+libusb 本体は `rusb` がソースからビルドするため、別途インストールする必要はありません。Linux では [Tauri のシステム依存パッケージ](https://v2.tauri.app/start/prerequisites/#linux)に加え、リーダー列挙用の `libudev-dev` が必要です。
 
 ## リーダーのドライバー設定
-felica-rs は libusb 経由でリーダーと通信します。libusb が USB デバイスを掴めるドライバーが割り当てられている必要があります。
+felica は libusb 経由でリーダーと通信します。libusb が USB デバイスを掴めるドライバーが割り当てられている必要があります。
 
 **Windows.** 既定では Windows がリーダーに独自のドライバーを割り当てており、libusb から開けません。[Zadig](https://zadig.akeo.ie/) でリーダーのドライバーを **WinUSB** に置き換えてください。置き換えると、デバイスマネージャーで元のドライバーに戻すまで、メーカー純正ソフト（Sony の NFC ポートソフトウェアなど）からはリーダーを利用できなくなります。
 
@@ -74,9 +77,9 @@ sudo udevadm control --reload-rules
 3. 下記コマンドでカードをかざすと、詳細情報がコンソールに出力
 
 ```bash
-suica-viewer
+suica-viewer-cli
 # 例:
-# AUTH_SERVER_URL=https://example.com suica-viewer
+# AUTH_SERVER_URL=https://example.com suica-viewer-cli
 ```
 
 出力は残高サマリを先頭に、色付き・表形式で整形されます（TTY 以外や `NO_COLOR` 環境変数では自動的に無彩色）。
@@ -95,25 +98,22 @@ suica-viewer
 - 定期券情報、改札入出場情報、SF 改札入場情報
 - 料金発券・改札情報（サービス `0x184B`）— カードが搭載する場合のみ存在確認して自動取得。非搭載のカードや、認証サーバに該当鍵が無い場合は、他の情報に影響を与えずスキップ
 
-## 使い方 (Web GUI)
-ブラウザから直接 USB リーダーや相互認証の中継はできないため、`suica-viewer-web` はリーダーを保持するローカルサーバを起動し、Server-Sent Events でカード情報をブラウザへ配信します。
+## 使い方 (デスクトップアプリ)
+Tauri の Rust プロセスが USB リーダーを保持し、カード情報をローカル IPC Channel で組み込みの Preact UI へ配信します。HTTP サーバーは起動せず、カード情報をネットワークへ公開しません。
 
 ```bash
-suica-viewer-web
-# 既定で http://127.0.0.1:8765/ をブラウザで開きます
+suica-viewer
 ```
 
 - カードを自動検出し、リロードなしでページをライブ更新します。残高ヒーローカード、タブ構成、差額付きの並び替え可能な取引履歴、改札テーブル、JSON/CSV 出力、ライト／ダークテーマに対応。
 - カードをリーダーから離すとページの表示もクリアされ、次のカードを待ちます。
-- 既定では `127.0.0.1` にのみバインドします。`--host 0.0.0.0` を指定すると LAN に公開されますが、カード情報がネットワークに流れる点に注意してください。
+- 専用のネイティブウィンドウを開き、カード読み取り処理は UI スレッドの外で実行します。
 
 オプション
 
 | フラグ | 説明 |
 | --- | --- |
-| `--host` / `--port` | バインド先（既定 `127.0.0.1:8765`） |
 | `--server URL` | 認証サーバの URL（`AUTH_SERVER_URL` より優先） |
-| `--no-browser` | 起動時にブラウザを自動で開かない |
 | `--demo` | リーダーなしで疑似カードを使い UI をプレビュー |
 
 ## 認証サーバーの設定
@@ -158,9 +158,10 @@ FeliCa は鍵が必要なノードを鍵不要ノードより先に並べるこ�
 `RUST_LOG=debug` を設定すると、カードとやり取りしたフレームを含む詳細ログが出力されます。
 
 ## 開発向けメモ
-- 整形・静的解析・テスト: `cargo fmt --all` / `cargo clippy --all-targets` / `cargo test`
-- リーダーなしで Web UI を確認する場合は `cargo run --bin suica-viewer-web -- --demo`
-- `v*` タグを push すると [`.github/workflows/release.yml`](.github/workflows/release.yml) が全プラットフォームのビルドを行い、実行ファイルを GitHub Release に添付します。
+- 初回に `npm ci --prefix ui` で UI の依存関係をインストールします。
+- `npm exec --prefix ui -- tauri dev -- -- --demo` で、リーダーなしのデモモードを起動できます。
+- フロントエンドの確認は `npm --prefix ui run build`、Rust の整形・静的解析・テストは `cargo fmt --all` / `cargo clippy --workspace --all-targets` / `cargo test --workspace` です。
+- `v*` タグを push すると [`.github/workflows/release.yml`](.github/workflows/release.yml) が全プラットフォームのビルドを行い、デスクトップアプリと CLI を GitHub Release に添付します。
 
 ## 開発者
 
