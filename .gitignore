@@ -1,5 +1,7 @@
 # Rust build artifacts
 /target/
+
+# Front-end dependencies and output
 /ui/node_modules/
 /ui/dist/
 
