@@ -4,7 +4,7 @@ version = "3.0.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Suica Viewer Tauri desktop application"
-authors = ["KIRISHIKI Yudai <yudai.kirishiki@protonmail.com>"]
+authors = ["KIRISHIKI Yudai <soltia48@protonmail.com>"]
 license = "MIT"
 
 [features]
