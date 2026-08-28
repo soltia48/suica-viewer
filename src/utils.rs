@@ -7,7 +7,7 @@
 
 use chrono::Datelike;
 
-use crate::station_codes::StationCodeLookup;
+use crate::{bus_company_codes::BusCompanyCodeLookup, station_codes::StationCodeLookup};
 
 /// System code of the transit (Suica) system on a FeliCa Standard card.
 pub const SYSTEM_CODE: u16 = 0x0003;
@@ -258,6 +258,15 @@ pub fn format_station(lookup: &StationCodeLookup, line_code: u8, station_order: 
             station.company_name, station.line_name, station.station_name
         ),
         None => format!("不明 (線区コード: 0x{line_code:02X}, 駅順コード: 0x{station_order:02X}, 地域コード: {area_code:})"),
+    }
+}
+
+/// Renders the attribute region code as both decimal and hex.
+/// Resolves a line/station code pair to `会社名 線区名 駅名`.
+pub fn format_bus_company(lookup: &BusCompanyCodeLookup, company_code: u16) -> String {
+    match lookup.get(company_code) {
+        Some(company) => company.company_name.clone(),
+        None => format!("不明 (事業者コード: 0x{company_code:04X})"),
     }
 }
 

@@ -17,6 +17,7 @@ pub mod card_data;
 pub mod reader;
 pub mod reader_errors;
 pub mod station_codes;
+pub mod bus_company_codes;
 pub mod utils;
 
 pub use auth_client::{AuthClient, AuthError, resolve_server_url};
