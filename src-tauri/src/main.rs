@@ -14,6 +14,7 @@ use std::time::Duration;
 use chrono::Local;
 use clap::Parser;
 use serde::Serialize;
+use suica_viewer::bus_company_codes::BusCompanyCodeLookup;
 use suica_viewer::card::SharedDriver;
 use suica_viewer::card_data::CardData;
 use suica_viewer::{
@@ -322,7 +323,7 @@ fn main() {
                     .name("nfc-demo".into())
                     .spawn(move || run_demo(worker_hub))
             } else {
-                let service = CardDataService::new(StationCodeLookup::new());
+                let service = CardDataService::new(StationCodeLookup::new(), BusCompanyCodeLookup::new());
                 std::thread::Builder::new()
                     .name("nfc-reader".into())
                     .spawn(move || run_reader(worker_hub, service, server_url))
