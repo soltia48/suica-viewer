@@ -9,10 +9,11 @@ use felica::FelicaStandardError;
 use serde::{Deserialize, Serialize};
 
 use crate::auth_client::{AuthClient, AuthError};
+use crate::bus_company_codes::BusCompanyCodeLookup;
 use crate::card::{CardError, CardSession};
 use crate::station_codes::StationCodeLookup;
 use crate::utils::{
-    SYSTEM_CODE, equipment_type_to_str, format_birth_date, format_date, format_station,
+    SYSTEM_CODE, equipment_type_to_str, format_birth_date, format_bus_company, format_date, format_station,
     format_time, gate_in_out_type_to_str, gate_instruction_type_to_str, idi_bytes_to_str,
     intermediate_gate_instruction_type_to_str, issuer_id_to_str, pay_type_to_str,
     transaction_type_to_str,
@@ -79,6 +80,10 @@ const COLLECTED_FLAG_MASK: u8 = 1 << 6;
 
 /// Purchase (物販) transactions store a clock instead of entry/exit stations.
 const PURCHASE_TRANSACTION_TYPE: u8 = 0x46;
+
+/// Bus transactions store a bus company and bus stop instead of entry/exit stations.
+const BUS_FLAT_FARE_TRANSACTION_TYPE: u8 = 0x0D;
+const BUS_TRANSACTION_TYPE: u8 = 0x0F;
 
 type Block = [u8; DATA_BLOCK_SIZE];
 
@@ -177,6 +182,10 @@ pub struct TransactionEntry {
     pub entry_station: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_station: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus_company: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus_stop: Option<u16>,
     pub balance: u16,
     pub transaction_number: u16,
     /// Balance change this transaction caused; `None` for the oldest entry,
@@ -384,11 +393,39 @@ fn require<T>(blocks: &[T], needed: usize, section: &str) -> Result<()> {
 /// Decodes the raw service blocks into the structured card sections.
 struct Decoder<'a> {
     stations: &'a StationCodeLookup,
+    bus_companies: &'a BusCompanyCodeLookup,
 }
 
 impl Decoder<'_> {
-    fn station(&self, line_code: u8, station_order: u8) -> String {
-        format_station(self.stations, line_code, station_order)
+    fn station(&self, line_code: u8, station_order: u8, area_code: u8) -> String {
+        format_station(self.stations, line_code, station_order, area_code)
+    }
+
+    fn station_without_area(&self, line_code: u8, station_order: u8) -> String {
+        let mut issued_station = Vec::new();
+        for area in 0..4{
+            let station = self.stations.get(line_code, station_order, area);
+            match station {
+                Some(station) => {
+                    issued_station.push(format!(
+                                            "{} {} {}",
+                                            station.company_name, station.line_name, station.station_name
+                                        ));
+                },
+                None => {}
+            }
+        }
+
+        if 0 < issued_station.len() {
+            return issued_station.join(" or ");
+        }
+        else{
+            return self.station(line_code, station_order, 0);
+        }
+    }
+
+    fn bus_company(&self, company_code: u16) -> String {
+        format_bus_company(self.bus_companies, company_code)
     }
 
     fn issue_primary(&self, blocks: &[Block]) -> Result<IssuePrimary> {
@@ -413,7 +450,7 @@ impl Decoder<'_> {
             issuer_id_hex,
             issued_by_code,
             issued_by: equipment_type_to_str(issued_by_code),
-            issued_station: self.station(metadata[3], metadata[4]),
+            issued_station: self.station_without_area(metadata[3], metadata[4]),
             issued_at: format_date(be16(metadata, 7)),
             expires_at: format_date(be16(metadata, 14)),
             collected,
@@ -453,7 +490,7 @@ impl Decoder<'_> {
         Ok(LastTopup {
             equipment_code,
             equipment: equipment_type_to_str(equipment_code),
-            station: self.station(block[1], block[2]),
+            station: self.station_without_area(block[1], block[2]),
             amount: le16(block, 5),
         })
     }
@@ -474,13 +511,22 @@ impl Decoder<'_> {
             let gate_instruction_type_code = block[3];
 
             let is_purchase = transaction_type_code == PURCHASE_TRANSACTION_TYPE;
-            let (transaction_time, entry_station, exit_station) = if is_purchase {
-                (Some(format_time(be16(block, 6))), None, None)
+            let is_bus = !is_purchase &&
+                (transaction_type_code == BUS_FLAT_FARE_TRANSACTION_TYPE || transaction_type_code == BUS_TRANSACTION_TYPE);
+
+            let (transaction_time, entry_station, exit_station, bus_company, bus_stop) = if is_purchase {
+                (Some(format_time(be16(block, 6))), None, None, None, None)
+            } else if is_bus {
+                (None, None, None,
+                    Some(self.bus_company(be16(block, 6))),
+                    Some(be16(block, 8)),
+                )
             } else {
                 (
                     None,
-                    Some(self.station(block[6], block[7])),
-                    Some(self.station(block[8], block[9])),
+                    Some(self.station(block[6], block[7], (block[15] >> 6) & 0b11)),
+                    Some(self.station(block[8], block[9], (block[15] >> 4) & 0b11)),
+                    None, None,
                 )
             };
 
@@ -498,6 +544,8 @@ impl Decoder<'_> {
                 transaction_time,
                 entry_station,
                 exit_station,
+                bus_company,
+                bus_stop,
                 balance: le16(block, 10),
                 transaction_number: be16(block, 13),
                 delta: None,
@@ -524,10 +572,10 @@ impl Decoder<'_> {
             issuer_id_hex,
             valid_from: format_date(be16(primary, 0)),
             valid_to: format_date(be16(primary, 2)),
-            start_station: self.station(primary[8], primary[9]),
-            end_station: self.station(primary[10], primary[11]),
-            via1_station: self.station(primary[12], primary[13]),
-            via2_station: self.station(primary[14], primary[15]),
+            start_station: self.station_without_area(primary[8], primary[9]),
+            end_station: self.station_without_area(primary[10], primary[11]),
+            via1_station: self.station_without_area(primary[12], primary[13]),
+            via2_station: self.station_without_area(primary[14], primary[15]),
             issued_at: format_date(be16(supplemental, 5)),
             pass_number: decode_bcd(&pass_number_bytes),
             r_number: decode_bcd(&extended_blocks[1][10..12])
@@ -576,11 +624,11 @@ impl Decoder<'_> {
                     intermediate_gate_instruction_type: intermediate_gate_instruction_type_to_str(
                         block[1],
                     ),
-                    station: self.station(block[2], block[3]),
+                    station: self.station_without_area(block[2], block[3]),
                     device_id_hex: hex::encode_upper(&block[4..6]),
                     amount: le16(block, 10),
                     commuter_pass_fee: le16(block, 12),
-                    commuter_station: self.station(block[14], block[15]),
+                    commuter_station: self.station_without_area(block[14], block[15]),
                 }
             })
             .collect()
@@ -593,13 +641,13 @@ impl Decoder<'_> {
 
         Ok(SfGate {
             has_record,
-            entry_station: self.station(first[0], first[1]),
+            entry_station: self.station_without_area(first[0], first[1]),
             intermediate_entry_date: format_date(be16(second, 0)),
             intermediate_entry_time: hex::encode_upper(&second[2..4]),
-            intermediate_entry_station: self.station(second[4], second[5]),
+            intermediate_entry_station: self.station_without_area(second[4], second[5]),
             unknown_value1_hex: format!("{:#x}", second[6]),
             intermediate_exit_time: hex::encode_upper(&second[7..9]),
-            intermediate_exit_station: self.station(second[9], second[10]),
+            intermediate_exit_station: self.station_without_area(second[9], second[10]),
             unknown_value2_hex: format!("{:#x}", second[11]),
         })
     }
@@ -611,14 +659,14 @@ impl Decoder<'_> {
             .filter(|(_, block)| block.iter().any(|&byte| byte != 0))
             .map(|(index, block)| PaidTicketEntry {
                 index,
-                depart_station: self.station(block[0], block[1]),
-                arrive_station: self.station(block[2], block[3]),
+                depart_station: self.station_without_area(block[0], block[1]),
+                arrive_station: self.station_without_area(block[2], block[3]),
                 expires_at: format_date(be16(block, 4)),
                 issued_time: format_time(be16(block, 6)),
                 issue_type_hex: hex::encode_upper(&block[8..9]),
                 amount: u16::from(block[9]) * 10,
                 device_id_hex: hex::encode_upper(&block[10..12]),
-                checked_station: self.station(block[12], block[13]),
+                checked_station: self.station_without_area(block[12], block[13]),
                 checked_time: format_time(be16(block, 14)),
             })
             .collect()
@@ -646,11 +694,12 @@ fn annotate_balance_deltas(entries: &mut [TransactionEntry]) {
 /// Authenticates against the server and assembles a [`CardData`].
 pub struct CardDataService {
     stations: StationCodeLookup,
+    bus_companies: BusCompanyCodeLookup,
 }
 
 impl CardDataService {
-    pub fn new(stations: StationCodeLookup) -> Self {
-        Self { stations }
+    pub fn new(stations: StationCodeLookup, bus_companies: BusCompanyCodeLookup) -> Self {
+        Self { stations, bus_companies }
     }
 
     pub fn stations(&self) -> &StationCodeLookup {
@@ -729,6 +778,7 @@ impl CardDataService {
 
         let decoder = Decoder {
             stations: &self.stations,
+            bus_companies: &self.bus_companies,
         };
 
         let issue_primary = decoder.issue_primary(&read_blocks(card, ISSUE_SERVICE, 4)?)?;
@@ -812,8 +862,8 @@ fn probe_paid_ticket(card: &mut CardSession<'_, '_>) -> (bool, Option<String>) {
 mod tests {
     use super::*;
 
-    fn decoder(stations: &StationCodeLookup) -> Decoder<'_> {
-        Decoder { stations }
+    fn decoder<'a>(stations: &'a StationCodeLookup, bus_companies: &'a BusCompanyCodeLookup) -> Decoder<'a> {
+        Decoder { stations, bus_companies }
     }
 
     fn block(bytes: &[u8]) -> Block {
@@ -908,11 +958,12 @@ mod tests {
     #[test]
     fn the_collected_flag_comes_from_bit_6_of_metadata_byte_9() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let empty = [0u8; DATA_BLOCK_SIZE];
         let metadata = |byte9: u8| block(&[0, 0, 0, 0, 0, 0, 0, 0, 0, byte9]);
 
         let collected = |byte9: u8| {
-            decoder(&stations)
+            decoder(&stations, &bus_companies)
                 .issue_primary(&[empty, empty, empty, metadata(byte9)])
                 .unwrap()
                 .collected
@@ -928,10 +979,11 @@ mod tests {
     #[test]
     fn history_stops_at_the_first_unwritten_slot() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let written = block(&[0x16, 0x01, 0x00, 0x02, 0x32, 0xF8, 1, 1, 1, 2, 0xE8, 0x03]);
         let blocks = vec![written, written, [0u8; DATA_BLOCK_SIZE], written];
 
-        let entries = decoder(&stations).transaction_history(&blocks);
+        let entries = decoder(&stations, &bus_companies).transaction_history(&blocks);
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].recorded_by, "自動改札機");
         assert_eq!(entries[0].transaction_type, "自動改札機出場");
@@ -940,13 +992,14 @@ mod tests {
     #[test]
     fn purchases_record_a_clock_and_no_route() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         // transaction type 0x46 (物販) with the clock at offset 6.
         let clock = ((12u16 << 11) | (34 << 5) | 15).to_be_bytes();
         let purchase = block(&[
             0xC7, 0x46, 0x00, 0x00, 0x32, 0xF8, clock[0], clock[1], 0, 0, 0xE8, 0x03,
         ]);
 
-        let entries = decoder(&stations).transaction_history(&[purchase]);
+        let entries = decoder(&stations, &bus_companies).transaction_history(&[purchase]);
         assert_eq!(entries[0].transaction_time.as_deref(), Some("12:34:30"));
         assert!(entries[0].entry_station.is_none());
         assert!(entries[0].exit_station.is_none());
@@ -961,6 +1014,7 @@ mod tests {
     #[test]
     fn balance_deltas_run_newest_to_oldest() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let with_balance = |balance: u16| {
             let bytes = balance.to_le_bytes();
             block(&[
@@ -968,7 +1022,7 @@ mod tests {
             ])
         };
 
-        let entries = decoder(&stations).transaction_history(&[
+        let entries = decoder(&stations, &bus_companies).transaction_history(&[
             with_balance(1000),
             with_balance(1200),
             with_balance(700),
@@ -982,10 +1036,11 @@ mod tests {
     #[test]
     fn zero_filled_gate_and_paid_slots_are_dropped() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let used = block(&[0xA0, 0x00, 1, 1, 0xAB, 0xCD, 0x32, 0xF8, 0x12, 0x34]);
         let empty = [0u8; DATA_BLOCK_SIZE];
 
-        let gates = decoder(&stations).gate(&[used, empty, used]);
+        let gates = decoder(&stations, &bus_companies).gate(&[used, empty, used]);
         assert_eq!(gates.len(), 2);
         // The index stays the card's slot number, not the row number.
         assert_eq!(gates[1].index, 2);
@@ -993,14 +1048,15 @@ mod tests {
         assert_eq!(gates[0].device_id_hex, "ABCD");
         assert_eq!(gates[0].gate_in_out_type, "入場");
 
-        assert!(decoder(&stations).paid_ticket(&[empty, empty]).is_empty());
+        assert!(decoder(&stations, &bus_companies).paid_ticket(&[empty, empty]).is_empty());
     }
 
     #[test]
     fn paid_ticket_fees_are_stored_divided_by_ten() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let entry = block(&[1, 1, 2, 2, 0x32, 0xF8, 0, 0, 0x01, 82, 0xAB, 0xCD]);
-        let tickets = decoder(&stations).paid_ticket(&[entry]);
+        let tickets = decoder(&stations, &bus_companies).paid_ticket(&[entry]);
         assert_eq!(tickets[0].amount, 820);
         assert_eq!(tickets[0].issue_type_hex, "01");
     }
@@ -1008,9 +1064,10 @@ mod tests {
     #[test]
     fn an_all_zero_sf_gate_block_pair_reports_no_record() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let empty = [0u8; DATA_BLOCK_SIZE];
         assert!(
-            !decoder(&stations)
+            !decoder(&stations, &bus_companies)
                 .sf_gate(&[empty, empty])
                 .unwrap()
                 .has_record
@@ -1018,7 +1075,7 @@ mod tests {
 
         let used = block(&[1, 1]);
         assert!(
-            decoder(&stations)
+            decoder(&stations, &bus_companies)
                 .sf_gate(&[used, empty])
                 .unwrap()
                 .has_record
@@ -1028,19 +1085,21 @@ mod tests {
     #[test]
     fn short_reads_are_reported_rather_than_panicking() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let one = vec![[0u8; DATA_BLOCK_SIZE]];
-        assert!(decoder(&stations).issue_primary(&one).is_err());
-        assert!(decoder(&stations).commuter(&one, &one).is_err());
-        assert!(decoder(&stations).sf_gate(&one).is_err());
-        assert!(decoder(&stations).attribute(&[]).is_err());
+        assert!(decoder(&stations, &bus_companies).issue_primary(&one).is_err());
+        assert!(decoder(&stations, &bus_companies).commuter(&one, &one).is_err());
+        assert!(decoder(&stations, &bus_companies).sf_gate(&one).is_err());
+        assert!(decoder(&stations, &bus_companies).attribute(&[]).is_err());
     }
 
     #[test]
     fn commuter_presence_keys_off_the_start_date() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
+        let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let blocks = vec![[0u8; DATA_BLOCK_SIZE]; 3];
         let extended = vec![[0u8; DATA_BLOCK_SIZE]; 10];
-        let commuter = decoder(&stations).commuter(&blocks, &extended).unwrap();
+        let commuter = decoder(&stations, &bus_companies).commuter(&blocks, &extended).unwrap();
         assert_eq!(commuter.valid_from, "—");
         assert_eq!(commuter.commuter_certificate_expiry, "—");
     }

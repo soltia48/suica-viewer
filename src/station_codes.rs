@@ -21,9 +21,9 @@ pub struct StationInfo {
     pub notes: String,
 }
 
-/// Index over the station code dataset, keyed by `(線区コード, 駅順コード)`.
+/// Index over the station code dataset, keyed by `(線区コード, 駅順コード, 地域コード)`.
 pub struct StationCodeLookup {
-    stations: HashMap<(u8, u8), StationInfo>,
+    stations: HashMap<(u8, u8, u8), StationInfo>,
 }
 
 impl StationCodeLookup {
@@ -54,7 +54,7 @@ impl StationCodeLookup {
             // Later rows win, matching the dict-assignment order of the dataset
             // as it was originally indexed.
             stations.insert(
-                (line_code, station_code),
+                (line_code, station_code, area_code),
                 StationInfo {
                     area_code,
                     line_code,
@@ -71,8 +71,8 @@ impl StationCodeLookup {
     }
 
     /// Looks up one station by line code and station order code.
-    pub fn get(&self, line_code: u8, station_order: u8) -> Option<&StationInfo> {
-        self.stations.get(&(line_code, station_order))
+    pub fn get(&self, line_code: u8, station_order: u8, area_code: u8) -> Option<&StationInfo> {
+        self.stations.get(&(line_code, station_order, area_code))
     }
 
     /// Number of indexed stations.
@@ -104,8 +104,8 @@ mod tests {
         let lookup = StationCodeLookup::new();
         assert!(lookup.len() > 5_000, "dataset looks truncated");
 
-        // 線区 0x01 / 駅順 0x01 = 東日本旅客鉄道 東海道線 東京
-        let tokyo = lookup.get(0x01, 0x01).expect("東京 should resolve");
+        // 線区 0x01 / 駅順 0x01 / 地域 0x00 = 東日本旅客鉄道 東海道線 東京
+        let tokyo = lookup.get(0x01, 0x01, 0x00).expect("東京 should resolve");
         assert_eq!(tokyo.company_name, "東日本旅客鉄道");
         assert_eq!(tokyo.station_name, "東京");
     }
@@ -114,16 +114,31 @@ mod tests {
     fn quoted_fields_containing_commas_do_not_shift_columns() {
         // 大阪市高速電気軌道 梅田 carries a quoted 備考 with an embedded comma.
         let lookup = StationCodeLookup::new();
-        let umeda = lookup.get(0x81, 0x1C).expect("梅田 should resolve");
+        let umeda = lookup.get(0x81, 0x1C, 0x02).expect("梅田 should resolve");
         assert_eq!(umeda.company_name, "大阪市高速電気軌道");
         assert_eq!(umeda.station_name, "梅田");
         assert!(umeda.notes.contains(','), "notes should keep the comma");
     }
 
     #[test]
+    fn area_code_differentiates_stations_with_identical_line_and_station_codes() {
+        let lookup = StationCodeLookup::new();
+
+        // 線区 0x82 / 駅順 0x22 / 地域 0x01 = 矢場町
+        let yabacho = lookup.get(0x82, 0x22, 0x01).expect("矢場町 should resolve");
+        assert_eq!(yabacho.company_name, "名古屋市交通局");
+        assert_eq!(yabacho.station_name, "矢場町");
+
+        // 線区 0x82 / 駅順 0x22 / 地域 0x02 = 天満橋
+        let temmabashi = lookup.get(0x82, 0x22, 0x02).expect("天満橋 should resolve");
+        assert_eq!(temmabashi.company_name, "大阪市高速電気軌道");
+        assert_eq!(temmabashi.station_name, "天満橋");
+    }
+
+    #[test]
     fn unknown_codes_resolve_to_none() {
         let lookup = StationCodeLookup::new();
-        assert!(lookup.get(0xFF, 0xFF).is_none());
+        assert!(lookup.get(0xFF, 0xFF, 0xFF).is_none());
     }
 
     #[test]
@@ -134,6 +149,6 @@ mod tests {
              0,2,3,良い会社,良い線,良い駅,\n",
         );
         assert_eq!(lookup.len(), 1);
-        assert_eq!(lookup.get(0x02, 0x03).unwrap().station_name, "良い駅");
+        assert_eq!(lookup.get(0x02, 0x03, 0x00).unwrap().station_name, "良い駅");
     }
 }

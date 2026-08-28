@@ -4,6 +4,7 @@ use std::io::{IsTerminal, Write};
 use std::process::ExitCode;
 
 use clap::Parser;
+use suica_viewer::bus_company_codes::BusCompanyCodeLookup;
 use suica_viewer::card::SharedDriver;
 use suica_viewer::card_data::{CardData, GateEntry, PaidTicketEntry, TransactionEntry};
 use suica_viewer::utils::{format_yen, thousands};
@@ -151,6 +152,11 @@ fn route_or_time(entry: &TransactionEntry) -> String {
     if let Some(time) = &entry.transaction_time {
         return time.clone();
     }
+
+    if let Some(bus_company) = &entry.bus_company {
+        return bus_company.clone();
+    }
+
     let entry_station = clean_station(entry.entry_station.as_ref());
     let exit_station = clean_station(entry.exit_station.as_ref());
     match (entry_station.is_empty(), exit_station.is_empty()) {
@@ -597,7 +603,7 @@ fn run(args: &Args) -> Result<(), String> {
         enabled: color_enabled,
     };
 
-    let service = CardDataService::new(StationCodeLookup::new());
+    let service = CardDataService::new(StationCodeLookup::new(), BusCompanyCodeLookup::new());
     let server_url = resolve_server_url(args.server.as_deref());
     let mut client =
         AuthClient::new(&server_url).map_err(|error| format!("初期化に失敗しました: {error}"))?;
@@ -691,6 +697,8 @@ mod tests {
             transaction_time: None,
             entry_station: Some("東日本旅客鉄道 東海道線 東京".into()),
             exit_station: Some("不明 (線区コード: 0xFF, 駅順コード: 0xFF)".into()),
+            bus_company: None,
+            bus_stop: None,
             balance: 1000,
             transaction_number: 5,
             delta: Some(-200),
