@@ -251,13 +251,13 @@ pub fn format_yen(value: i64) -> String {
 
 /// Renders the attribute region code as both decimal and hex.
 /// Resolves a line/station code pair to `会社名 線区名 駅名`.
-pub fn format_station(lookup: &StationCodeLookup, line_code: u8, station_order: u8) -> String {
-    match lookup.get(line_code, station_order) {
+pub fn format_station(lookup: &StationCodeLookup, line_code: u8, station_order: u8, area_code: u8) -> String {
+    match lookup.get(line_code, station_order, area_code) {
         Some(station) => format!(
             "{} {} {}",
             station.company_name, station.line_name, station.station_name
         ),
-        None => format!("不明 (線区コード: 0x{line_code:02X}, 駅順コード: 0x{station_order:02X})"),
+        None => format!("不明 (線区コード: 0x{line_code:02X}, 駅順コード: 0x{station_order:02X}, 地域コード: {area_code:})"),
     }
 }
 
