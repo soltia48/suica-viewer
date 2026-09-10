@@ -323,7 +323,8 @@ fn main() {
                     .name("nfc-demo".into())
                     .spawn(move || run_demo(worker_hub))
             } else {
-                let service = CardDataService::new(StationCodeLookup::new(), BusCompanyCodeLookup::new());
+                let service =
+                    CardDataService::new(StationCodeLookup::new(), BusCompanyCodeLookup::new());
                 std::thread::Builder::new()
                     .name("nfc-reader".into())
                     .spawn(move || run_reader(worker_hub, service, server_url))

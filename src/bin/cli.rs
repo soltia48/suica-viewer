@@ -713,6 +713,16 @@ mod tests {
         };
         assert_eq!(route_or_time(&purchase), "12:34:30");
 
+        let bus = TransactionEntry {
+            transaction_type_code: 0x0F,
+            entry_station: None,
+            exit_station: None,
+            bus_company: Some("都営バス・都電".into()),
+            bus_stop: Some(0x0123),
+            ..base.clone()
+        };
+        assert_eq!(route_or_time(&bus), "都営バス・都電");
+
         let unknown_both = TransactionEntry {
             entry_station: Some("不明 (…)".into()),
             exit_station: Some("不明 (…)".into()),

@@ -70,7 +70,7 @@ impl StationCodeLookup {
         Self { stations }
     }
 
-    /// Looks up one station by line code and station order code.
+    /// Looks up one station by line code, station order code, and region code.
     pub fn get(&self, line_code: u8, station_order: u8, area_code: u8) -> Option<&StationInfo> {
         self.stations.get(&(line_code, station_order, area_code))
     }

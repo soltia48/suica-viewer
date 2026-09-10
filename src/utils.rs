@@ -61,6 +61,7 @@ fn transaction_type(code: u8) -> Option<&'static str> {
         0x13 => "料金出場",
         0x14 => "オートチャージ",
         0x1F => "バス等チャージ",
+        0x23 => "バス・路面電車企画券購入",
         0x46 => "物販",
         0x48 => "ポイントチャージ",
         0x4B => "入場・物販",
@@ -249,20 +250,25 @@ pub fn format_yen(value: i64) -> String {
     format!("{} 円", thousands(value))
 }
 
-/// Renders the attribute region code as both decimal and hex.
-/// Resolves a line/station code pair to `会社名 線区名 駅名`.
-pub fn format_station(lookup: &StationCodeLookup, line_code: u8, station_order: u8, area_code: u8) -> String {
+/// Resolves a line/station code pair within its region to `会社名 線区名 駅名`.
+pub fn format_station(
+    lookup: &StationCodeLookup,
+    line_code: u8,
+    station_order: u8,
+    area_code: u8,
+) -> String {
     match lookup.get(line_code, station_order, area_code) {
         Some(station) => format!(
             "{} {} {}",
             station.company_name, station.line_name, station.station_name
         ),
-        None => format!("不明 (線区コード: 0x{line_code:02X}, 駅順コード: 0x{station_order:02X}, 地域コード: {area_code:})"),
+        None => format!(
+            "不明 (線区コード: 0x{line_code:02X}, 駅順コード: 0x{station_order:02X}, 地域コード: {area_code})"
+        ),
     }
 }
 
-/// Renders the attribute region code as both decimal and hex.
-/// Resolves a line/station code pair to `会社名 線区名 駅名`.
+/// Resolves a bus company code, retaining unknown codes for identification.
 pub fn format_bus_company(lookup: &BusCompanyCodeLookup, company_code: u16) -> String {
     match lookup.get(company_code) {
         Some(company) => company.company_name.clone(),

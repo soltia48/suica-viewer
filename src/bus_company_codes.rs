@@ -39,7 +39,8 @@ impl BusCompanyCodeLookup {
 
             // Later rows win, matching the dict-assignment order of the dataset
             // as it was originally indexed.
-            buscompanies.insert(company_code, 
+            buscompanies.insert(
+                company_code,
                 BusCompanyInfo {
                     company_code,
                     company_name: field(1).to_string(),

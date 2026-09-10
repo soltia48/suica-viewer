@@ -13,9 +13,9 @@ use crate::bus_company_codes::BusCompanyCodeLookup;
 use crate::card::{CardError, CardSession};
 use crate::station_codes::StationCodeLookup;
 use crate::utils::{
-    SYSTEM_CODE, equipment_type_to_str, format_birth_date, format_bus_company, format_date, format_station,
-    format_time, gate_in_out_type_to_str, gate_instruction_type_to_str, idi_bytes_to_str,
-    intermediate_gate_instruction_type_to_str, issuer_id_to_str, pay_type_to_str,
+    SYSTEM_CODE, equipment_type_to_str, format_birth_date, format_bus_company, format_date,
+    format_station, format_time, gate_in_out_type_to_str, gate_instruction_type_to_str,
+    idi_bytes_to_str, intermediate_gate_instruction_type_to_str, issuer_id_to_str, pay_type_to_str,
     transaction_type_to_str,
 };
 
@@ -84,6 +84,8 @@ const PURCHASE_TRANSACTION_TYPE: u8 = 0x46;
 /// Bus transactions store a bus company and bus stop instead of entry/exit stations.
 const BUS_FLAT_FARE_TRANSACTION_TYPE: u8 = 0x0D;
 const BUS_TRANSACTION_TYPE: u8 = 0x0F;
+const BUS_TOPUP_TRANSACTION_TYPE: u8 = 0x1F;
+const BUS_TICKET_TRANSACTION_TYPE: u8 = 0x23;
 
 type Block = [u8; DATA_BLOCK_SIZE];
 
@@ -402,25 +404,20 @@ impl Decoder<'_> {
     }
 
     fn station_without_area(&self, line_code: u8, station_order: u8) -> String {
-        let mut issued_station = Vec::new();
-        for area in 0..4{
-            let station = self.stations.get(line_code, station_order, area);
-            match station {
-                Some(station) => {
-                    issued_station.push(format!(
-                                            "{} {} {}",
-                                            station.company_name, station.line_name, station.station_name
-                                        ));
-                },
-                None => {}
+        let mut candidates = Vec::new();
+        for area in 0..4 {
+            if let Some(station) = self.stations.get(line_code, station_order, area) {
+                candidates.push(format!(
+                    "{} {} {}",
+                    station.company_name, station.line_name, station.station_name
+                ));
             }
         }
 
-        if 0 < issued_station.len() {
-            return issued_station.join(" or ");
-        }
-        else{
-            return self.station(line_code, station_order, 0);
+        if candidates.is_empty() {
+            format!("不明 (線区コード: 0x{line_code:02X}, 駅順コード: 0x{station_order:02X})")
+        } else {
+            candidates.join(" or ")
         }
     }
 
@@ -511,24 +508,34 @@ impl Decoder<'_> {
             let gate_instruction_type_code = block[3];
 
             let is_purchase = transaction_type_code == PURCHASE_TRANSACTION_TYPE;
-            let is_bus = !is_purchase &&
-                (transaction_type_code == BUS_FLAT_FARE_TRANSACTION_TYPE || transaction_type_code == BUS_TRANSACTION_TYPE);
+            let is_bus = matches!(
+                transaction_type_code,
+                BUS_FLAT_FARE_TRANSACTION_TYPE
+                    | BUS_TRANSACTION_TYPE
+                    | BUS_TOPUP_TRANSACTION_TYPE
+                    | BUS_TICKET_TRANSACTION_TYPE
+            );
 
-            let (transaction_time, entry_station, exit_station, bus_company, bus_stop) = if is_purchase {
-                (Some(format_time(be16(block, 6))), None, None, None, None)
-            } else if is_bus {
-                (None, None, None,
-                    Some(self.bus_company(be16(block, 6))),
-                    Some(be16(block, 8)),
-                )
-            } else {
-                (
-                    None,
-                    Some(self.station(block[6], block[7], (block[15] >> 6) & 0b11)),
-                    Some(self.station(block[8], block[9], (block[15] >> 4) & 0b11)),
-                    None, None,
-                )
-            };
+            let (transaction_time, entry_station, exit_station, bus_company, bus_stop) =
+                if is_purchase {
+                    (Some(format_time(be16(block, 6))), None, None, None, None)
+                } else if is_bus {
+                    (
+                        None,
+                        None,
+                        None,
+                        Some(self.bus_company(be16(block, 6))),
+                        Some(be16(block, 8)),
+                    )
+                } else {
+                    (
+                        None,
+                        Some(self.station(block[6], block[7], (block[15] >> 6) & 0b11)),
+                        Some(self.station(block[8], block[9], (block[15] >> 4) & 0b11)),
+                        None,
+                        None,
+                    )
+                };
 
             entries.push(TransactionEntry {
                 index,
@@ -699,7 +706,10 @@ pub struct CardDataService {
 
 impl CardDataService {
     pub fn new(stations: StationCodeLookup, bus_companies: BusCompanyCodeLookup) -> Self {
-        Self { stations, bus_companies }
+        Self {
+            stations,
+            bus_companies,
+        }
     }
 
     pub fn stations(&self) -> &StationCodeLookup {
@@ -862,8 +872,14 @@ fn probe_paid_ticket(card: &mut CardSession<'_, '_>) -> (bool, Option<String>) {
 mod tests {
     use super::*;
 
-    fn decoder<'a>(stations: &'a StationCodeLookup, bus_companies: &'a BusCompanyCodeLookup) -> Decoder<'a> {
-        Decoder { stations, bus_companies }
+    fn decoder<'a>(
+        stations: &'a StationCodeLookup,
+        bus_companies: &'a BusCompanyCodeLookup,
+    ) -> Decoder<'a> {
+        Decoder {
+            stations,
+            bus_companies,
+        }
     }
 
     fn block(bytes: &[u8]) -> Block {
@@ -990,6 +1006,147 @@ mod tests {
     }
 
     #[test]
+    fn history_resolves_entry_and_exit_regions_independently() {
+        let stations = StationCodeLookup::from_csv(
+            "area,line,station,company,line_name,station_name,notes\n\
+             0,82,22,会社,路線,地域0の駅,\n\
+             1,82,22,会社,路線,地域1の駅,\n\
+             2,82,22,会社,路線,地域2の駅,\n\
+             3,82,22,会社,路線,地域3の駅,\n",
+        );
+        let bus_companies = BusCompanyCodeLookup::from_csv("code,name,notes\n");
+        for entry_area in 0..4 {
+            for exit_area in 0..4 {
+                let record = block(&[
+                    0x16,
+                    0x01,
+                    0,
+                    0x02,
+                    0x32,
+                    0xF8,
+                    0x82,
+                    0x22,
+                    0x82,
+                    0x22,
+                    0xE8,
+                    0x03,
+                    0,
+                    0,
+                    1,
+                    (entry_area << 6) | (exit_area << 4) | 0x0F,
+                ]);
+                let entries = decoder(&stations, &bus_companies).transaction_history(&[record]);
+                assert_eq!(
+                    entries[0].entry_station.as_deref(),
+                    Some(format!("会社 路線 地域{entry_area}の駅").as_str())
+                );
+                assert_eq!(
+                    entries[0].exit_station.as_deref(),
+                    Some(format!("会社 路線 地域{exit_area}の駅").as_str())
+                );
+                assert!(entries[0].bus_company.is_none());
+                assert!(entries[0].bus_stop.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn history_does_not_fall_back_to_a_station_in_another_region() {
+        let stations = StationCodeLookup::from_csv(
+            "area,line,station,company,line_name,station_name,notes\n\
+             0,82,22,会社,路線,地域0の駅,\n",
+        );
+        let bus_companies = BusCompanyCodeLookup::from_csv("code,name,notes\n");
+        let record = block(&[
+            0x16, 0x01, 0, 0x02, 0x32, 0xF8, 0x82, 0x22, 0x82, 0x22, 0xE8, 0x03, 0, 0, 1, 0x60,
+        ]);
+        let entries = decoder(&stations, &bus_companies).transaction_history(&[record]);
+        assert_eq!(
+            entries[0].entry_station.as_deref(),
+            Some("不明 (線区コード: 0x82, 駅順コード: 0x22, 地域コード: 1)")
+        );
+        assert_eq!(
+            entries[0].exit_station.as_deref(),
+            Some("不明 (線区コード: 0x82, 駅順コード: 0x22, 地域コード: 2)")
+        );
+    }
+
+    #[test]
+    fn records_without_a_region_keep_all_station_candidates() {
+        let stations = StationCodeLookup::new();
+        let bus_companies = BusCompanyCodeLookup::new();
+        let decoder = decoder(&stations, &bus_companies);
+        let topup = decoder.last_topup(&[block(&[0x08, 0x82, 0x22])]).unwrap();
+        assert_eq!(
+            topup.station,
+            "名古屋市交通局 2号線 名城線及び名港線 矢場町 or 大阪市高速電気軌道 2号線(谷町線) 天満橋"
+        );
+        assert_eq!(
+            decoder.station_without_area(0xFF, 0xFF),
+            "不明 (線区コード: 0xFF, 駅順コード: 0xFF)"
+        );
+    }
+
+    #[test]
+    fn bus_history_preserves_company_and_stop_for_fares_topups_and_tickets() {
+        let stations = StationCodeLookup::new();
+        let bus_companies = BusCompanyCodeLookup::new();
+        for transaction_type in [0x0D, 0x0F, 0x1F, 0x23] {
+            // If decoded as a railway journey, these bytes misleadingly resolve
+            // to 道成寺 → 小田原. Both bus fields are 16-bit big-endian codes.
+            let record = block(&[
+                0x05,
+                transaction_type,
+                0,
+                0,
+                0x32,
+                0xF8,
+                0x0C,
+                0x4A,
+                0x01,
+                0x23,
+                0xE8,
+                0x03,
+                0,
+                0,
+                1,
+                0,
+            ]);
+            let entries = decoder(&stations, &bus_companies).transaction_history(&[record]);
+            let entry = &entries[0];
+            assert_eq!(
+                entry.bus_company.as_deref(),
+                Some("都営バス・都電"),
+                "transaction type 0x{transaction_type:02X}"
+            );
+            assert_eq!(entry.bus_stop, Some(0x0123));
+            assert_eq!(entry.balance, 1000);
+            assert!(entry.transaction_time.is_none());
+            assert!(entry.entry_station.is_none());
+            assert!(entry.exit_station.is_none());
+            let json = serde_json::to_value(entry).unwrap();
+            assert_eq!(json["bus_company"], "都営バス・都電");
+            assert_eq!(json["bus_stop"], 0x0123);
+            assert!(json.get("entry_station").is_none());
+            assert!(json.get("exit_station").is_none());
+            assert!(json.get("transaction_time").is_none());
+        }
+    }
+
+    #[test]
+    fn unknown_bus_companies_keep_the_full_code_and_zero_stop() {
+        let stations = StationCodeLookup::new();
+        let bus_companies = BusCompanyCodeLookup::new();
+        let record = block(&[0x05, 0x0F, 0, 0, 0x32, 0xF8, 0xFF, 0xFF, 0, 0, 0xE8, 0x03]);
+        let entries = decoder(&stations, &bus_companies).transaction_history(&[record]);
+        assert_eq!(
+            entries[0].bus_company.as_deref(),
+            Some("不明 (事業者コード: 0xFFFF)")
+        );
+        assert_eq!(entries[0].bus_stop, Some(0));
+    }
+
+    #[test]
     fn purchases_record_a_clock_and_no_route() {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
         let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
@@ -1003,12 +1160,20 @@ mod tests {
         assert_eq!(entries[0].transaction_time.as_deref(), Some("12:34:30"));
         assert!(entries[0].entry_station.is_none());
         assert!(entries[0].exit_station.is_none());
+        assert!(entries[0].bus_company.is_none());
+        assert!(entries[0].bus_stop.is_none());
 
         // The route fields must be absent from the JSON, not null: the UI keys
         // off their absence to render a dash.
         let json = serde_json::to_value(&entries[0]).unwrap();
         assert!(json.get("entry_station").is_none());
         assert!(json.get("transaction_time").is_some());
+        assert!(json.get("bus_company").is_none());
+        assert!(json.get("bus_stop").is_none());
+        // Existing saved JSON and demo data omit the new bus fields.
+        let restored: TransactionEntry = serde_json::from_value(json).unwrap();
+        assert!(restored.bus_company.is_none());
+        assert!(restored.bus_stop.is_none());
     }
 
     #[test]
@@ -1048,7 +1213,11 @@ mod tests {
         assert_eq!(gates[0].device_id_hex, "ABCD");
         assert_eq!(gates[0].gate_in_out_type, "入場");
 
-        assert!(decoder(&stations, &bus_companies).paid_ticket(&[empty, empty]).is_empty());
+        assert!(
+            decoder(&stations, &bus_companies)
+                .paid_ticket(&[empty, empty])
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1087,8 +1256,16 @@ mod tests {
         let stations = StationCodeLookup::from_csv("a,b,c,d,e,f,g\n");
         let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let one = vec![[0u8; DATA_BLOCK_SIZE]];
-        assert!(decoder(&stations, &bus_companies).issue_primary(&one).is_err());
-        assert!(decoder(&stations, &bus_companies).commuter(&one, &one).is_err());
+        assert!(
+            decoder(&stations, &bus_companies)
+                .issue_primary(&one)
+                .is_err()
+        );
+        assert!(
+            decoder(&stations, &bus_companies)
+                .commuter(&one, &one)
+                .is_err()
+        );
         assert!(decoder(&stations, &bus_companies).sf_gate(&one).is_err());
         assert!(decoder(&stations, &bus_companies).attribute(&[]).is_err());
     }
@@ -1099,7 +1276,9 @@ mod tests {
         let bus_companies = BusCompanyCodeLookup::from_csv("a,b,c\n");
         let blocks = vec![[0u8; DATA_BLOCK_SIZE]; 3];
         let extended = vec![[0u8; DATA_BLOCK_SIZE]; 10];
-        let commuter = decoder(&stations, &bus_companies).commuter(&blocks, &extended).unwrap();
+        let commuter = decoder(&stations, &bus_companies)
+            .commuter(&blocks, &extended)
+            .unwrap();
         assert_eq!(commuter.valid_from, "—");
         assert_eq!(commuter.commuter_certificate_expiry, "—");
     }

@@ -23,6 +23,7 @@ const station = (entry: TransactionEntry, side: "entry" | "exit") =>
   entry.transaction_type_code === 0x46 ? "—" : dash(entry[`${side}_station`]);
 
 const route = (entry: TransactionEntry) => {
+  if (entry.bus_company) return entry.bus_company;
   const start = station(entry, "entry");
   const end = station(entry, "exit");
   return start === "—" && end === "—" ? "—" : `${start} → ${end}`;
@@ -57,6 +58,21 @@ const historyColumns: HistoryColumn[] = [
     value: (entry) => station(entry, "exit"),
   },
   {
+    key: "bus_company",
+    label: "バス事業者",
+    value: (entry) => entry.bus_company,
+  },
+  {
+    key: "bus_stop",
+    label: "バス停コード",
+    numeric: true,
+    value: (entry) =>
+      entry.bus_stop == null
+        ? undefined
+        : `0x${entry.bus_stop.toString(16).toUpperCase().padStart(4, "0")}`,
+    sortValue: (entry) => entry.bus_stop ?? Number.NEGATIVE_INFINITY,
+  },
+  {
     key: "delta",
     label: "差額",
     numeric: true,
@@ -82,7 +98,7 @@ const historyColumns: HistoryColumn[] = [
 
 const routeColumn: HistoryColumn = {
   key: "route",
-  label: "区間",
+  label: "区間 / バス事業者",
   value: route,
 };
 const summaryColumns = [

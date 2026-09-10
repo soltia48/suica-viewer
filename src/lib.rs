@@ -12,12 +12,12 @@
 //! - [`station_codes`] / [`utils`] — name and value resolution
 
 pub mod auth_client;
+pub mod bus_company_codes;
 pub mod card;
 pub mod card_data;
 pub mod reader;
 pub mod reader_errors;
 pub mod station_codes;
-pub mod bus_company_codes;
 pub mod utils;
 
 pub use auth_client::{AuthClient, AuthError, resolve_server_url};
