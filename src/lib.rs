@@ -12,6 +12,7 @@
 //! - [`station_codes`] / [`utils`] — name and value resolution
 
 pub mod auth_client;
+pub mod bus_company_codes;
 pub mod card;
 pub mod card_data;
 pub mod reader;

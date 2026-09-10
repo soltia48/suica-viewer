@@ -246,7 +246,8 @@ function Overview({
                     <span class="muted">
                       {entry.transaction_type_code === 0x46
                         ? entry.recorded_by
-                        : [entry.entry_station, entry.exit_station]
+                        : entry.bus_company ||
+                          [entry.entry_station, entry.exit_station]
                             .filter((station) => station && station !== "—")
                             .join(" → ") || entry.recorded_by}
                     </span>
@@ -555,6 +556,14 @@ const csvColumns: Array<[string, (entry: TransactionEntry) => DisplayValue]> = [
   ["残高", (entry) => entry.balance],
   ["機器", (entry) => entry.recorded_by],
   ["通番", (entry) => entry.transaction_number],
+  ["バス事業者", (entry) => entry.bus_company],
+  [
+    "バス停コード",
+    (entry) =>
+      entry.bus_stop == null
+        ? undefined
+        : `0x${entry.bus_stop.toString(16).toUpperCase().padStart(4, "0")}`,
+  ],
 ];
 
 const csvCell = (value: DisplayValue) => {

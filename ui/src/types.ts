@@ -58,6 +58,8 @@ export interface TransactionEntry {
   transaction_time?: string;
   entry_station?: string;
   exit_station?: string;
+  bus_company?: string;
+  bus_stop?: number;
   balance: number;
   transaction_number: number;
   delta: number | null;
