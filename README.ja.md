@@ -11,6 +11,51 @@ Suica Viewer は、FeliCa ベースの交通系 IC カードから詳細な情�
 - `station_codes.csv` に基づく会社名・路線名・駅名の解決（実行ファイルに同梱）
 - `AUTH_SERVER_URL` 環境変数での認証サーバーの切り替え（既定: `https://felica-auth.nyaa.ws`）
 
+## スクリーンショット
+
+以下は同梱のデモデータを使った画面です。`suica-viewer --demo` を実行すると、リーダーなしで操作を試せます。
+
+### 概要
+
+残高・定期券情報・最近の取引をまとめて確認できます。
+
+![デモカードの残高、定期券情報、最近の取引を表示した概要画面](docs/screenshots/overview.png)
+
+### 取引履歴
+
+取引の検索・絞り込み、残高の増減の確認、詳細列の表示ができます。
+
+![検索・絞り込み欄とデモカードの取引一覧を表示した取引履歴画面](docs/screenshots/history.png)
+
+<details>
+<summary>カード情報・改札・データ・ダークテーマを見る</summary>
+
+### カード情報
+
+発行情報・カード属性・定期券の詳細を確認できます。
+
+![デモカードの発行情報、カード属性、定期券情報を表示したカード情報画面](docs/screenshots/card-info.png)
+
+### 改札
+
+改札入出場履歴・SF改札入場情報に加え、対応するカードでは料金発券・改札情報を確認できます。
+
+![デモカードの改札入出場履歴、SF改札入場情報、料金発券・改札情報を表示した改札画面](docs/screenshots/gates.png)
+
+### データ
+
+カード情報を JSON で確認・コピー・保存し、取引履歴を CSV で出力できます。
+
+![JSON・CSVの出力ボタンとデモカードのJSONプレビューを表示したデータ画面](docs/screenshots/data.png)
+
+### ダークテーマ
+
+概要画面をダークテーマで表示した例です。
+
+![デモカードの残高、定期券情報、最近の取引をダークテーマで表示した概要画面](docs/screenshots/overview-dark.png)
+
+</details>
+
 ## 必要環境
 - [Rust](https://www.rust-lang.org/) 1.88 以降（ソースからビルドする場合。edition 2024 を使用）
 - [Node.js](https://nodejs.org/) 20.19 以降（または 22.12 以降）と npm（Preact フロントエンドのビルドに使用）

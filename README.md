@@ -11,6 +11,51 @@ Reader control and the FeliCa protocol are provided by [felica](https://github.c
 - Resolves company, line, and station names from `station_codes.csv`, which is compiled into the executable
 - Switch authentication servers via the `AUTH_SERVER_URL` environment variable (default: `https://felica-auth.nyaa.ws`)
 
+## Screenshots
+
+The desktop interface is in Japanese. These screenshots use the bundled demo data, which you can explore without a reader by running `suica-viewer --demo`.
+
+### Overview
+
+Balance, commuter pass details, and recent transactions at a glance.
+
+![Overview tab in the Japanese interface, showing the demo card balance, commuter pass, and recent transactions](docs/screenshots/overview.png)
+
+### Transaction History
+
+Search and filter transactions, compare balance changes, and show additional record details.
+
+![Transaction History tab with search and filter controls above the demo card's transaction table](docs/screenshots/history.png)
+
+<details>
+<summary>Card Info, Gates, Data, and dark theme</summary>
+
+### Card Info
+
+Detailed issuance information, card attributes, and commuter pass records.
+
+![Card Info tab displaying issuance details, card attributes, and commuter pass information from the demo data](docs/screenshots/card-info.png)
+
+### Gates
+
+Gate entry and exit records, SF gate information, and paid-ticket records when available.
+
+![Gates tab displaying the demo card's gate entry and exit history and related gate records](docs/screenshots/gates.png)
+
+### Data
+
+Inspect card data as JSON, copy or save it, and export transaction history as CSV.
+
+![Data tab with JSON and CSV export controls and a preview of the demo card's JSON data](docs/screenshots/data.png)
+
+### Dark Theme
+
+The same overview in the app's dark theme.
+
+![Overview tab in dark theme, showing the demo card balance, commuter pass, and recent transactions](docs/screenshots/overview-dark.png)
+
+</details>
+
 ## Requirements
 - [Rust](https://www.rust-lang.org/) 1.88 or later, to build from source (the crate uses edition 2024)
 - [Node.js](https://nodejs.org/) 20.19 or later (or 22.12 or later) and npm, to build the Preact front end

@@ -1,6 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { History } from "./History";
 import type {
   CardData,
   GateEntry,
@@ -39,7 +40,13 @@ const hhmm = (value: string) =>
 const hasCommuter = (card: CardData) =>
   Boolean(card.commuter.valid_from && card.commuter.valid_from !== "—");
 
-function CardPanel({ title, children }: { title: string; children: ComponentChildren }) {
+function CardPanel({
+  title,
+  children,
+}: {
+  title: string;
+  children: ComponentChildren;
+}) {
   return (
     <div class="card">
       <h2>{title}</h2>
@@ -51,7 +58,10 @@ function CardPanel({ title, children }: { title: string; children: ComponentChil
 function EmptyCard({ title, message }: { title: string; message: string }) {
   return (
     <CardPanel title={title}>
-      <div class="empty">{message}</div>
+      <div class="empty">
+        <p>{message}</p>
+        <p>リーダーにカードをかざすと、自動で表示されます。</p>
+      </div>
     </CardPanel>
   );
 }
@@ -69,89 +79,227 @@ function KeyValues({ rows }: { rows: Array<[string, DisplayValue]> }) {
   );
 }
 
-function Overview({ card }: { card: CardData | null }) {
+function Overview({
+  card,
+  readerState,
+  onHistory,
+}: {
+  card: CardData | null;
+  readerState: ReaderState;
+  onHistory: () => void;
+}) {
+  if (!card) {
+    const title =
+      readerState === "reading"
+        ? "カードを読み取っています"
+        : readerState === "initializing"
+          ? "リーダーに接続しています"
+          : readerState === "error"
+            ? "接続状態を確認してください"
+            : "カードをかざしてください";
+    return (
+      <div class="welcome card">
+        <svg
+          class="reader-illustration"
+          width="80"
+          height="80"
+          viewBox="0 0 80 80"
+          fill="none"
+          aria-hidden="true"
+        >
+          <rect
+            x="12"
+            y="37"
+            width="56"
+            height="31"
+            rx="8"
+            stroke="currentColor"
+            stroke-width="2"
+          />
+          <rect
+            x="23"
+            y="11"
+            width="34"
+            height="45"
+            rx="5"
+            fill="var(--surface)"
+            stroke="currentColor"
+            stroke-width="2"
+          />
+          <path
+            d="M34 26a10 10 0 0 1 0 16m5-19a15 15 0 0 1 0 22m-10-15a5 5 0 0 1 0 8"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+          <path
+            d="M34 62h12"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </svg>
+        <h2>{title}</h2>
+        <p>
+          {readerState === "reading"
+            ? "読み取りが終わるまで、カードをリーダーに置いたままにしてください。"
+            : readerState === "error"
+              ? "上の案内に沿って、リーダーと通信環境を確認してください。"
+              : "Suica などの交通系 IC カードの残高や利用履歴を確認できます。"}
+        </p>
+        <ol class="read-steps">
+          <li>
+            <span class="step-number" aria-hidden="true">
+              1
+            </span>
+            <span>リーダーを PC に接続</span>
+          </li>
+          <li>
+            <span class="step-number" aria-hidden="true">
+              2
+            </span>
+            <span>カードをリーダーに置く</span>
+          </li>
+          <li>
+            <span class="step-number" aria-hidden="true">
+              3
+            </span>
+            <span>自動で読み取り・表示</span>
+          </li>
+        </ol>
+        <p class="welcome-note">
+          カードを離すと表示が消えます。必要な情報は「データ」から保存できます。
+        </p>
+      </div>
+    );
+  }
+
   return (
     <>
-      <div class="hero">
-        <div class="cap">残高</div>
-        <div class="amount">{card ? yen(card.attribute.balance) : "—"}</div>
-        <div class="sub">
-          {card
-            ? card.issue_primary.issuer_id || "カード読取済み"
-            : "カードをかざしてください"}
+      <div class="overview-summary">
+        <div class="hero">
+          <h2 class="cap">カード残高</h2>
+          <div class="amount">
+            {card.attribute.balance.toLocaleString("ja-JP")}
+            <span class="currency">円</span>
+          </div>
+          <div class="sub">
+            {card.issue_primary.issuer_id || "交通系 IC カード"}
+          </div>
+          {card.issue_primary.collected && (
+            <div class="flag">取り込み済み（無効カード）</div>
+          )}
+          <div class="hero-footer">
+            <span>最終チャージ</span>
+            <strong>{yen(card.last_topup.amount)}</strong>
+          </div>
         </div>
-        {card?.issue_primary.collected && (
-          <div class="flag">取り込み済み（無効カード）</div>
-        )}
+        <div class="commuter-summary card">
+          <h2>定期券</h2>
+          <div class="body">
+            {hasCommuter(card) ? (
+              <>
+                <div class="commuter-route">
+                  <span>{dash(card.commuter.start_station)}</span>
+                  <span class="route-connector" aria-hidden="true">
+                    →
+                  </span>
+                  <span class="sr-only">から</span>
+                  <span>{dash(card.commuter.end_station)}</span>
+                </div>
+                <p class="muted">有効期間</p>
+                <p class="commuter-dates">
+                  {card.commuter.valid_from} 〜 {card.commuter.valid_to}
+                </p>
+                <p class="muted commuter-issuer">{card.commuter.issuer_id}</p>
+              </>
+            ) : (
+              <div class="commuter-empty">
+                <p>定期券の登録はありません</p>
+                <p class="muted">区間・有効期間の記録はありません。</p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {!card ? (
-        <EmptyCard title="カード識別" message="カードが読み取られていません。" />
-      ) : (
-        <div class="cols">
-          <CardPanel title="カード識別">
-            <KeyValues
-              rows={[
-                ["IDm", card.system.idm_hex],
-                ["PMm", card.system.pmm_hex],
-                ["IDi", card.system.idi_display],
-                ["PMi", card.system.pmi],
-                ["発行者", card.issue_primary.issuer_id],
-              ]}
-            />
-          </CardPanel>
-          <CardPanel title="利用サマリ">
-            <KeyValues
-              rows={[
-                ["残高", yen(card.attribute.balance)],
-                ["最終チャージ金額", yen(card.last_topup.amount)],
-                ["取引通番", card.attribute.transaction_number.toLocaleString("ja-JP")],
-              ]}
-            />
-          </CardPanel>
-          <CardPanel title="発行・有効情報">
-            <KeyValues
-              rows={[
-                ["発行日", card.issue_primary.issued_at],
-                ["有効期限", card.issue_primary.expires_at],
-                ["発行駅", card.issue_primary.issued_station],
-                [
-                  "取り込み済み",
-                  card.issue_primary.collected ? "はい（無効カード）" : "いいえ",
-                ],
-              ]}
-            />
-          </CardPanel>
-          <CardPanel title="定期券ハイライト">
-            <KeyValues
-              rows={
-                hasCommuter(card)
-                  ? [
-                      [
-                        "区間",
-                        `${card.commuter.start_station} → ${card.commuter.end_station}`,
-                      ],
-                      [
-                        "有効期間",
-                        `${card.commuter.valid_from} 〜 ${card.commuter.valid_to}`,
-                      ],
-                    ]
-                  : [
-                      ["区間", "—"],
-                      ["状態", "定期券なし"],
-                    ]
-              }
-            />
-          </CardPanel>
+      <div class="card recent-card">
+        <div class="card-heading">
+          <h2>最近の取引</h2>
+          <button class="ghost" type="button" onClick={onHistory}>
+            取引履歴を見る <span aria-hidden="true">→</span>
+          </button>
         </div>
-      )}
+        <div class="body">
+          {card.transaction_history.length ? (
+            <ul class="recent-list">
+              {card.transaction_history.slice(0, 3).map((entry) => (
+                <li key={entry.index}>
+                  <div class="recent-date">
+                    {entry.recorded_on}
+                    {entry.transaction_time && (
+                      <span>{entry.transaction_time}</span>
+                    )}
+                  </div>
+                  <div class="recent-description">
+                    <strong>{entry.transaction_type}</strong>
+                    <span class="muted">
+                      {entry.transaction_type_code === 0x46
+                        ? entry.recorded_by
+                        : [entry.entry_station, entry.exit_station]
+                            .filter((station) => station && station !== "—")
+                            .join(" → ") || entry.recorded_by}
+                    </span>
+                  </div>
+                  <div
+                    class={`recent-amount ${typeof entry.delta === "number" && entry.delta > 0 ? "amount-positive" : ""}`}
+                  >
+                    {delta(entry.delta)}
+                    <span class="muted">残高 {yen(entry.balance)}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p class="empty">このカードには取引履歴がありません。</p>
+          )}
+        </div>
+      </div>
+
+      <details class="card identity-details">
+        <summary>カード識別・発行情報</summary>
+        <div class="body cols">
+          <KeyValues
+            rows={[
+              ["IDm", card.system.idm_hex],
+              ["PMm", card.system.pmm_hex],
+              ["IDi", card.system.idi_display],
+              ["PMi", card.system.pmi],
+              ["発行者", card.issue_primary.issuer_id],
+            ]}
+          />
+          <KeyValues
+            rows={[
+              ["発行日", card.issue_primary.issued_at],
+              ["有効期限", card.issue_primary.expires_at],
+              ["発行駅", card.issue_primary.issued_station],
+              [
+                "取り込み済み",
+                card.issue_primary.collected ? "はい（無効カード）" : "いいえ",
+              ],
+            ]}
+          />
+        </div>
+      </details>
     </>
   );
 }
 
 function CardInfo({ card }: { card: CardData | null }) {
   if (!card) {
-    return <EmptyCard title="カード情報" message="カードが読み取られていません。" />;
+    return (
+      <EmptyCard title="カード情報" message="カードが読み取られていません。" />
+    );
   }
 
   const issue = card.issue_primary;
@@ -220,7 +368,10 @@ function CardInfo({ card }: { card: CardData | null }) {
               ...(commuter.commuter_certificate_expiry &&
               commuter.commuter_certificate_expiry !== "—"
                 ? ([
-                    ["通学証明書省略期限", commuter.commuter_certificate_expiry],
+                    [
+                      "通学証明書省略期限",
+                      commuter.commuter_certificate_expiry,
+                    ],
                   ] as Array<[string, string]>)
                 : []),
             ]}
@@ -247,211 +398,82 @@ function CardInfo({ card }: { card: CardData | null }) {
   );
 }
 
-interface HistoryColumn {
-  key: string;
-  label: string;
-  numeric?: boolean;
-  value: (entry: TransactionEntry) => DisplayValue;
-  sortValue?: (entry: TransactionEntry) => string | number;
-}
-
-const historyColumns: HistoryColumn[] = [
-  {
-    key: "when",
-    label: "日時",
-    value: (entry) => `${entry.recorded_on} ${entry.transaction_time || ""}`.trim(),
-  },
-  { key: "transaction_type", label: "取引種別", value: (entry) => entry.transaction_type },
-  { key: "pay_type", label: "支払種別", value: (entry) => entry.pay_type },
-  {
-    key: "gate_instruction_type",
-    label: "改札処理",
-    value: (entry) => entry.gate_instruction_type,
-  },
-  {
-    key: "entry_station",
-    label: "入場駅",
-    value: (entry) => (entry.transaction_type_code === 0x46 ? "—" : entry.entry_station),
-  },
-  {
-    key: "exit_station",
-    label: "出場駅",
-    value: (entry) => (entry.transaction_type_code === 0x46 ? "—" : entry.exit_station),
-  },
-  {
-    key: "delta",
-    label: "差額",
-    numeric: true,
-    value: (entry) => delta(entry.delta),
-    sortValue: (entry) => entry.delta ?? Number.NEGATIVE_INFINITY,
-  },
-  {
-    key: "balance",
-    label: "残高",
-    numeric: true,
-    value: (entry) => yen(entry.balance),
-    sortValue: (entry) => entry.balance,
-  },
-  { key: "recorded_by", label: "機器", value: (entry) => entry.recorded_by },
-  {
-    key: "transaction_number",
-    label: "通番",
-    numeric: true,
-    value: (entry) => entry.transaction_number.toLocaleString("ja-JP"),
-    sortValue: (entry) => entry.transaction_number,
-  },
-];
-
-function History({ card }: { card: CardData | null }) {
-  const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<{ key: string | null; direction: 1 | -1 }>({
-    key: null,
-    direction: 1,
-  });
-
-  const rows = useMemo(() => {
-    if (!card) return [];
-    const query = filter.trim().toLocaleLowerCase("ja");
-    const filtered = query
-      ? card.transaction_history.filter((entry) =>
-          historyColumns.some((column) =>
-            dash(column.value(entry)).toLocaleLowerCase("ja").includes(query),
-          ),
-        )
-      : card.transaction_history.slice();
-
-    const column = historyColumns.find(({ key }) => key === sort.key);
-    if (column) {
-      filtered.sort((left, right) => {
-        const a = column.sortValue?.(left) ?? dash(column.value(left));
-        const b = column.sortValue?.(right) ?? dash(column.value(right));
-        const comparison =
-          typeof a === "number" && typeof b === "number"
-            ? a - b
-            : String(a).localeCompare(String(b), "ja");
-        return comparison * sort.direction;
-      });
-    }
-    return filtered;
-  }, [card, filter, sort]);
-
-  const sortBy = (key: string) => {
-    setSort((current) =>
-      current.key === key
-        ? { key, direction: current.direction === 1 ? -1 : 1 }
-        : { key, direction: 1 },
-    );
-  };
-
-  return (
-    <>
-      <div class="toolbar">
-        <input
-          type="search"
-          aria-label="取引履歴を検索"
-          placeholder="フィルター (全文検索)…"
-          value={filter}
-          onInput={(event) => setFilter(event.currentTarget.value)}
-        />
-        <button class="ghost" type="button" onClick={() => setFilter("")}>
-          クリア
-        </button>
-      </div>
-      {!card ? (
-        <div class="empty">カードが読み取られていません。</div>
-      ) : (
-        <>
-          <div class="tablewrap">
-            <table>
-              <thead>
-                <tr>
-                  {historyColumns.map((column) => (
-                    <th
-                      class={column.numeric ? "num" : undefined}
-                      key={column.key}
-                      aria-sort={
-                        sort.key !== column.key
-                          ? "none"
-                          : sort.direction === 1
-                            ? "ascending"
-                            : "descending"
-                      }
-                    >
-                      <button type="button" onClick={() => sortBy(column.key)}>
-                        {column.label}
-                        <span class="arrow">
-                          {sort.key === column.key ? (sort.direction === 1 ? "▲" : "▼") : ""}
-                        </span>
-                      </button>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((entry) => (
-                  <tr class={typeof entry.delta === "number" && entry.delta > 0 ? "charge" : ""} key={entry.index}>
-                    {historyColumns.map((column) => (
-                      <td class={column.numeric ? "num" : undefined} key={column.key}>
-                        {dash(column.value(entry))}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {rows.length === 0 && (
-            <div class="empty">{filter ? "該当する取引がありません。" : "取引履歴なし"}</div>
-          )}
-        </>
-      )}
-    </>
-  );
-}
-
 interface Column<Row> {
   label: string;
   numeric?: boolean;
   value: (row: Row) => DisplayValue;
 }
 
-function DataTable<Row>({ columns, rows }: { columns: Array<Column<Row>>; rows: Row[] }) {
+function DataTable<Row>({
+  columns,
+  rows,
+  label,
+}: {
+  columns: Array<Column<Row>>;
+  rows: Row[];
+  label: string;
+}) {
   return (
-    <div class="tablewrap">
-      <table>
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th class={column.numeric ? "num" : undefined} key={column.label}>
-                {column.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={index}>
+    <>
+      <p class="table-hint">表が収まらない場合は横にスクロールできます。</p>
+      <div
+        class="tablewrap"
+        role="region"
+        aria-label={`${label}の表（横にスクロールできます）`}
+        tabIndex={0}
+      >
+        <table aria-label={label}>
+          <thead>
+            <tr>
               {columns.map((column) => (
-                <td class={column.numeric ? "num" : undefined} key={column.label}>
-                  {dash(column.value(row))}
-                </td>
+                <th
+                  scope="col"
+                  class={column.numeric ? "num" : undefined}
+                  key={column.label}
+                >
+                  {column.label}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              <tr key={index}>
+                {columns.map((column) => (
+                  <td
+                    class={column.numeric ? "num" : undefined}
+                    key={column.label}
+                  >
+                    {dash(column.value(row))}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
 const gateColumns: Array<Column<GateEntry>> = [
-  { label: "日時", value: (entry) => `${dash(entry.date)} ${entry.time || ""}`.trim() },
+  {
+    label: "日時",
+    value: (entry) => `${dash(entry.date)} ${entry.time || ""}`.trim(),
+  },
   { label: "入出場種別", value: (entry) => entry.gate_in_out_type },
-  { label: "中間処理", value: (entry) => entry.intermediate_gate_instruction_type },
+  {
+    label: "中間処理",
+    value: (entry) => entry.intermediate_gate_instruction_type,
+  },
   { label: "駅", value: (entry) => entry.station },
   { label: "装置番号", value: (entry) => entry.device_id_hex },
   { label: "金額", numeric: true, value: (entry) => yen(entry.amount) },
-  { label: "定期運賃", numeric: true, value: (entry) => yen(entry.commuter_pass_fee) },
+  {
+    label: "定期運賃",
+    numeric: true,
+    value: (entry) => yen(entry.commuter_pass_fee),
+  },
   { label: "定期駅", value: (entry) => entry.commuter_station },
 ];
 
@@ -468,13 +490,18 @@ const paidTicketColumns: Array<Column<PaidTicketEntry>> = [
 ];
 
 function Gates({ card }: { card: CardData | null }) {
-  if (!card) return <EmptyCard title="改札" message="カードが読み取られていません。" />;
+  if (!card)
+    return <EmptyCard title="改札" message="カードが読み取られていません。" />;
 
   return (
     <>
       <CardPanel title="改札入出場履歴">
         {card.gate.length ? (
-          <DataTable columns={gateColumns} rows={card.gate} />
+          <DataTable
+            columns={gateColumns}
+            rows={card.gate}
+            label="改札入出場履歴"
+          />
         ) : (
           <div class="empty">改札入出場記録なし</div>
         )}
@@ -493,11 +520,17 @@ function Gates({ card }: { card: CardData | null }) {
           />
         </CardPanel>
       ) : (
-        <EmptyCard title="SF改札入場情報" message="記録なし" />
+        <CardPanel title="SF改札入場情報">
+          <p class="empty">このカードには入場記録がありません。</p>
+        </CardPanel>
       )}
       <CardPanel title="料金発券・改札情報">
         {card.paid_ticket.length ? (
-          <DataTable columns={paidTicketColumns} rows={card.paid_ticket} />
+          <DataTable
+            columns={paidTicketColumns}
+            rows={card.paid_ticket}
+            label="料金発券・改札情報"
+          />
         ) : (
           <div class="empty">
             {card.paid_ticket_available
@@ -541,62 +574,135 @@ function download(name: string, text: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
-function DataView({
-  card,
-  setStatus,
-}: {
-  card: CardData | null;
-  setStatus: (state: ReaderState, message: string) => void;
-}) {
+function DataView({ card }: { card: CardData | null }) {
+  const [feedback, setFeedback] = useState<{
+    message: string;
+    error?: boolean;
+  } | null>(null);
+  const feedbackFrame = useRef<number | null>(null);
+
+  useEffect(() => setFeedback(null), [card]);
+  useEffect(
+    () => () => {
+      if (feedbackFrame.current !== null)
+        cancelAnimationFrame(feedbackFrame.current);
+    },
+    [],
+  );
+
+  const announceFeedback = (next: { message: string; error?: boolean }) => {
+    if (feedbackFrame.current !== null)
+      cancelAnimationFrame(feedbackFrame.current);
+    setFeedback(null);
+    // Commit an empty region first so repeated saves can be announced again.
+    feedbackFrame.current = requestAnimationFrame(() => {
+      feedbackFrame.current = null;
+      setFeedback(next);
+    });
+  };
+
   const copyJson = async () => {
     if (!card) return;
+    setFeedback(null);
     try {
       await navigator.clipboard.writeText(JSON.stringify(card, null, 2));
-      setStatus("done", "JSON をコピーしました。");
+      announceFeedback({ message: "JSON をコピーしました。" });
     } catch {
-      setStatus("error", "コピーに失敗しました。");
+      announceFeedback({
+        message:
+          "JSON をコピーできませんでした。「JSON を保存」でファイルに保存できます。",
+        error: true,
+      });
     }
   };
 
-  const exportCsv = () => {
+  const exportData = (format: "json" | "csv") => {
     if (!card) return;
-    const lines = [csvColumns.map(([label]) => label).join(",")];
-    for (const entry of card.transaction_history) {
-      lines.push(csvColumns.map(([, value]) => csvCell(value(entry))).join(","));
+    try {
+      if (format === "json") {
+        download(
+          "suica_card.json",
+          JSON.stringify(card, null, 2),
+          "application/json",
+        );
+      } else {
+        const lines = [csvColumns.map(([label]) => label).join(",")];
+        for (const entry of card.transaction_history) {
+          lines.push(
+            csvColumns.map(([, value]) => csvCell(value(entry))).join(","),
+          );
+        }
+        download("suica_history.csv", lines.join("\r\n"), "text/csv");
+      }
+      announceFeedback({
+        message: `${format === "json" ? "JSON" : "CSV"} の保存を開始しました。`,
+      });
+    } catch {
+      announceFeedback({
+        message: "保存を開始できませんでした。もう一度保存を実行してください。",
+        error: true,
+      });
     }
-    download("suica_history.csv", lines.join("\r\n"), "text/csv");
   };
 
   return (
-    <CardPanel title="カード情報 JSON">
+    <CardPanel title="データを書き出す">
+      <p class="section-intro">
+        {card
+          ? "カード情報は JSON、取引履歴は CSV で保存できます。"
+          : "カードを読み取ると、カード情報や取引履歴を保存できます。"}
+      </p>
       <div class="toolbar">
         <button class="ghost" type="button" disabled={!card} onClick={copyJson}>
-          JSONをコピー
+          JSON をコピー
         </button>
         <button
           class="ghost"
           type="button"
           disabled={!card}
-          onClick={() =>
-            card && download("suica_card.json", JSON.stringify(card, null, 2), "application/json")
-          }
+          onClick={() => exportData("json")}
         >
-          JSONを保存
+          JSON を保存
         </button>
-        <button class="ghost" type="button" disabled={!card} onClick={exportCsv}>
-          履歴をCSVで保存
+        <button
+          class="ghost"
+          type="button"
+          disabled={!card}
+          onClick={() => exportData("csv")}
+        >
+          履歴を CSV で保存
         </button>
       </div>
-      <pre class="json">
-        {card ? JSON.stringify(card, null, 2) : "// カードが読み取られていません"}
-      </pre>
+      <p
+        class={`export-feedback ${feedback?.error ? "error" : ""}`}
+        role="status"
+        aria-atomic="true"
+      >
+        {feedback?.message}
+      </p>
+      {card && (
+        <pre
+          class="json"
+          tabIndex={0}
+          role="region"
+          aria-label="カード情報 JSON"
+        >
+          {JSON.stringify(card, null, 2)}
+        </pre>
+      )}
     </CardPanel>
   );
 }
 
 function initialTheme(): Theme {
-  const stored = localStorage.getItem("suica-theme");
-  return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+  try {
+    const stored = localStorage.getItem("suica-theme");
+    if (stored === "light" || stored === "dark" || stored === "system")
+      return stored;
+  } catch {
+    // Theme selection remains available if storage is unavailable.
+  }
+  return "system";
 }
 
 export function App() {
@@ -604,15 +710,31 @@ export function App() {
   const [card, setCard] = useState<CardData | null>(null);
   const [readAt, setReadAt] = useState<string | null>(null);
   const [readerState, setReaderState] = useState<ReaderState>("initializing");
-  const [statusMessage, setStatusMessage] = useState("接続しています…");
+  const [statusMessage, setStatusMessage] =
+    useState("NFC リーダーに接続しています…");
   const [progress, setProgress] = useState(0);
   const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [systemIsDark, setSystemIsDark] = useState(
+    () => matchMedia("(prefers-color-scheme: dark)").matches,
+  );
 
   useEffect(() => {
-    if (theme === "system") document.documentElement.removeAttribute("data-theme");
-    else document.documentElement.dataset.theme = theme;
-    localStorage.setItem("suica-theme", theme);
-  }, [theme]);
+    const preference = matchMedia("(prefers-color-scheme: dark)");
+    const updatePreference = () => setSystemIsDark(preference.matches);
+    updatePreference();
+    preference.addEventListener("change", updatePreference);
+    return () => preference.removeEventListener("change", updatePreference);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme =
+      theme === "system" ? (systemIsDark ? "dark" : "light") : theme;
+    try {
+      localStorage.setItem("suica-theme", theme);
+    } catch {
+      // Apply the selection for this session even when it cannot be persisted.
+    }
+  }, [theme, systemIsDark]);
 
   useEffect(() => {
     const channel = new Channel<ReaderEvent>();
@@ -624,7 +746,11 @@ export function App() {
           if (event.state !== "reading") setProgress(0);
           break;
         case "progress":
-          setProgress(event.value);
+          setProgress(
+            Number.isFinite(event.value)
+              ? Math.max(0, Math.min(100, event.value))
+              : 0,
+          );
           break;
         case "card":
           setCard(event.data);
@@ -648,40 +774,112 @@ export function App() {
       setReaderState("error");
       setStatusMessage(`リーダーとの接続に失敗しました: ${String(error)}`);
     });
+
+    return () => {
+      channel.onmessage = () => {};
+    };
   }, []);
 
-  const systemIsDark = matchMedia("(prefers-color-scheme: dark)").matches;
-  const isDark = theme === "dark" || (theme === "system" && systemIsDark);
-  const updateStatus = (state: ReaderState, message: string) => {
-    setReaderState(state);
-    setStatusMessage(message);
+  const hasReaderError =
+    readerState === "error" ||
+    (readerState === "waiting" && /エラー|失敗|不正/.test(statusMessage));
+  const isReading = readerState === "reading";
+  const readerLabel = hasReaderError
+    ? readerState === "error"
+      ? "読み取りを開始できません"
+      : "カードを読み取れませんでした"
+    : statusMessage;
+  const recoveryMessage =
+    readerState !== "error"
+      ? /サーバ|通信|ネットワーク|HTTP|request|connect/i.test(statusMessage)
+        ? "インターネット接続と認証サーバの状態を確認し、カードを置き直してください。"
+        : "カードをいったん離し、リーダーの中央に置き直してください。"
+      : statusMessage.includes("認証サーバ")
+        ? "認証サーバの設定を確認し、アプリを起動し直してください。"
+        : "リーダーの USB 接続と下のエラー内容を確認し、アプリを起動し直してください。";
+
+  const handleTabKeyDown = (event: KeyboardEvent, currentTab: Tab) => {
+    const index = tabs.findIndex((tab) => tab.id === currentTab);
+    let nextIndex: number;
+    switch (event.key) {
+      case "ArrowRight":
+        nextIndex = (index + 1) % tabs.length;
+        break;
+      case "ArrowLeft":
+        nextIndex = (index - 1 + tabs.length) % tabs.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = tabs.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    const nextTab = tabs[nextIndex].id;
+    setActiveTab(nextTab);
+    document.getElementById(`tab-${nextTab}`)?.focus();
   };
 
   return (
     <main class="wrap">
+      <a class="skip-link" href={`#panel-${activeTab}`}>
+        カード情報へ移動
+      </a>
       <header class="top">
-        <h1>Suica Viewer</h1>
-        <span class="status" role="status">
-          <span class={`dot ${readerState}`} aria-hidden="true" />
-          <span>{statusMessage}</span>
-        </span>
-        <span class="spacer" />
-        <span class="meta">読取日時: {readAt || "—"}</span>
-        <button
-          class="ghost"
-          type="button"
-          title="テーマ切替"
-          onClick={() => setTheme(isDark ? "light" : "dark")}
-        >
-          {isDark ? "☀ ライト" : "🌙 ダーク"}
-        </button>
+        <div class="brand">
+          <h1 translate={false}>Suica Viewer</h1>
+          <p class="app-caption">交通系 IC カードの残高・利用履歴</p>
+        </div>
+        <label class="theme-control">
+          <span>表示</span>
+          <select
+            value={theme}
+            onChange={(event) => setTheme(event.currentTarget.value as Theme)}
+          >
+            <option value="system">システム</option>
+            <option value="light">ライト</option>
+            <option value="dark">ダーク</option>
+          </select>
+        </label>
       </header>
 
-      <div class={`progress ${progress > 0 && progress < 100 ? "" : "idle"}`}>
-        <i style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
+      <div class="reader-bar">
+        <span class="status" role="status" aria-atomic="true">
+          <span
+            class={`dot ${hasReaderError ? "error" : readerState}`}
+            aria-hidden="true"
+          />
+          <span>{readerLabel}</span>
+        </span>
+        {readAt && <span class="meta">読取日時: {readAt}</span>}
       </div>
 
-      <nav class="tabs" role="tablist" aria-label="カード情報">
+      <div role="alert" aria-atomic="true">
+        {hasReaderError && (
+          <div class="reader-notice error">
+            <p class="reader-notice-title">{recoveryMessage}</p>
+            <p class="reader-notice-detail">{statusMessage}</p>
+          </div>
+        )}
+      </div>
+      {isReading && (
+        <div class="reader-notice reading">
+          <p class="reader-notice-title">
+            読み取りが終わるまで、カードを動かさずにお待ちください。
+          </p>
+          <progress
+            class="progress"
+            max={100}
+            value={progress}
+            aria-label="カード情報の読み取り"
+          />
+        </div>
+      )}
+
+      <div class="tabs" role="tablist" aria-label="カード情報">
         {tabs.map((tab) => (
           <button
             type="button"
@@ -689,21 +887,49 @@ export function App() {
             id={`tab-${tab.id}`}
             aria-controls={`panel-${tab.id}`}
             aria-selected={activeTab === tab.id}
+            tabIndex={activeTab === tab.id ? 0 : -1}
             onClick={() => setActiveTab(tab.id)}
+            onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
             key={tab.id}
           >
             {tab.label}
           </button>
         ))}
-      </nav>
+      </div>
 
-      <section role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
-        {activeTab === "overview" && <Overview card={card} />}
-        {activeTab === "cardinfo" && <CardInfo card={card} />}
-        {activeTab === "history" && <History card={card} />}
-        {activeTab === "gates" && <Gates card={card} />}
-        {activeTab === "data" && <DataView card={card} setStatus={updateStatus} />}
-      </section>
+      {tabs.map((tab) => (
+        <section
+          class="tab-panel"
+          role="tabpanel"
+          id={`panel-${tab.id}`}
+          aria-labelledby={`tab-${tab.id}`}
+          tabIndex={0}
+          hidden={activeTab !== tab.id}
+          aria-busy={isReading}
+          key={tab.id}
+        >
+          {tab.id === "overview" && (
+            <Overview
+              card={card}
+              readerState={hasReaderError ? "error" : readerState}
+              onHistory={() => {
+                setActiveTab("history");
+                requestAnimationFrame(() =>
+                  document.getElementById("panel-history")?.focus(),
+                );
+              }}
+            />
+          )}
+          {tab.id === "cardinfo" && <CardInfo card={card} />}
+          {tab.id === "history" && (
+            <History key={card?.system.idm_hex ?? "no-card"} card={card} />
+          )}
+          {tab.id === "gates" && <Gates card={card} />}
+          {tab.id === "data" && (
+            <DataView key={card?.system.idm_hex ?? "no-card"} card={card} />
+          )}
+        </section>
+      ))}
     </main>
   );
 }
