@@ -544,6 +544,13 @@ button:disabled {
 .cols > .card {
   margin-block-end: 0;
 }
+.card-info {
+  columns: 2 360px;
+  column-gap: 24px;
+}
+.card-info > .card {
+  break-inside: avoid;
+}
 .welcome.card {
   padding: 40px 24px;
   text-align: center;

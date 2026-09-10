@@ -311,7 +311,7 @@ function CardInfo({ card }: { card: CardData | null }) {
   const yesNo = (value: boolean) => (value ? "有" : "無");
 
   return (
-    <div class="cols">
+    <div class="card-info">
       <CardPanel title="発行情報">
         <KeyValues
           rows={[
