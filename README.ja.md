@@ -55,7 +55,7 @@ Suica Viewer は、FeliCa 方式の交通系 IC カードから詳しい情報�
 </details>
 
 ## 動作環境
-- [Rust](https://www.rust-lang.org/) 1.88 以降（ソースからビルドする場合。edition 2024）
+- [Rust](https://www.rust-lang.org/) 1.90 以降（ソースからビルドする場合。edition 2024）
 - [Node.js](https://nodejs.org/) 20.19 以降または 22.12 以降と npm（フロントエンドのビルド用）
 - felica が対応する FeliCa リーダー
 

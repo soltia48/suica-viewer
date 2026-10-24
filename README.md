@@ -55,7 +55,7 @@ Copy or save the card data as JSON, or export the history as CSV.
 </details>
 
 ## Requirements
-- [Rust](https://www.rust-lang.org/) 1.88 or later (edition 2024), to build from source
+- [Rust](https://www.rust-lang.org/) 1.90 or later (edition 2024), to build from source
 - [Node.js](https://nodejs.org/) 20.19+ or 22.12+ and npm, to build the front end
 - A FeliCa reader supported by felica:
 
