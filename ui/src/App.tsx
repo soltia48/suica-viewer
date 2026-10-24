@@ -55,17 +55,6 @@ function CardPanel({
   );
 }
 
-function EmptyCard({ title, message }: { title: string; message: string }) {
-  return (
-    <CardPanel title={title}>
-      <div class="empty">
-        <p>{message}</p>
-        <p>リーダーにカードをかざすと、自動で表示されます。</p>
-      </div>
-    </CardPanel>
-  );
-}
-
 function KeyValues({ rows }: { rows: Array<[string, DisplayValue]> }) {
   return (
     <dl class="grid">
@@ -79,74 +68,66 @@ function KeyValues({ rows }: { rows: Array<[string, DisplayValue]> }) {
   );
 }
 
-function Overview({
-  card,
+function Welcome({
   readerState,
-  onHistory,
+  title,
+  progress,
 }: {
-  card: CardData | null;
   readerState: ReaderState;
-  onHistory: () => void;
+  title: string;
+  progress: number;
 }) {
-  if (!card) {
-    const title =
-      readerState === "reading"
-        ? "カードを読み取っています"
-        : readerState === "initializing"
-          ? "リーダーに接続しています"
-          : readerState === "error"
-            ? "接続状態を確認してください"
-            : "カードをかざしてください";
-    return (
-      <div class="welcome card">
-        <svg
-          class="reader-illustration"
-          width="80"
-          height="80"
-          viewBox="0 0 80 80"
-          fill="none"
-          aria-hidden="true"
-        >
-          <rect
-            x="12"
-            y="37"
-            width="56"
-            height="31"
-            rx="8"
-            stroke="currentColor"
-            stroke-width="2"
-          />
-          <rect
-            x="23"
-            y="11"
-            width="34"
-            height="45"
-            rx="5"
-            fill="var(--surface)"
-            stroke="currentColor"
-            stroke-width="2"
-          />
-          <path
-            d="M34 26a10 10 0 0 1 0 16m5-19a15 15 0 0 1 0 22m-10-15a5 5 0 0 1 0 8"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          />
-          <path
-            d="M34 62h12"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          />
-        </svg>
-        <h2>{title}</h2>
-        <p>
-          {readerState === "reading"
-            ? "読み取りが終わるまで、カードをリーダーに置いたままにしてください。"
-            : readerState === "error"
-              ? "上の案内に沿って、リーダーと通信環境を確認してください。"
-              : "Suica などの交通系 IC カードの残高や利用履歴を確認できます。"}
-        </p>
+  return (
+    <div class="welcome card" id="content" tabIndex={-1}>
+      <svg
+        class="reader-illustration"
+        width="80"
+        height="80"
+        viewBox="0 0 80 80"
+        fill="none"
+        aria-hidden="true"
+      >
+        <rect
+          x="12"
+          y="37"
+          width="56"
+          height="31"
+          rx="8"
+          stroke="currentColor"
+          stroke-width="2"
+        />
+        <rect
+          x="23"
+          y="11"
+          width="34"
+          height="45"
+          rx="5"
+          fill="var(--surface)"
+          stroke="currentColor"
+          stroke-width="2"
+        />
+        <path
+          d="M34 26a10 10 0 0 1 0 16m5-19a15 15 0 0 1 0 22m-10-15a5 5 0 0 1 0 8"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        />
+        <path
+          d="M34 62h12"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        />
+      </svg>
+      <h2>{title}</h2>
+      {readerState === "reading" ? (
+        <progress
+          class="progress"
+          max={100}
+          value={progress}
+          aria-label="読み取りの進行状況"
+        />
+      ) : (
         <ol class="read-steps">
           <li>
             <span class="step-number" aria-hidden="true">
@@ -160,25 +141,24 @@ function Overview({
             </span>
             <span>カードをリーダーに置く</span>
           </li>
-          <li>
-            <span class="step-number" aria-hidden="true">
-              3
-            </span>
-            <span>自動で読み取り・表示</span>
-          </li>
         </ol>
-        <p class="welcome-note">
-          カードを離すと表示が消えます。必要な情報は「データ」から保存できます。
-        </p>
-      </div>
-    );
-  }
+      )}
+    </div>
+  );
+}
 
+function Overview({
+  card,
+  onHistory,
+}: {
+  card: CardData;
+  onHistory: () => void;
+}) {
   return (
     <>
       <div class="overview-summary">
         <div class="hero">
-          <h2 class="cap">カード残高</h2>
+          <h2 class="cap">残高</h2>
           <div class="amount">
             {card.attribute.balance.toLocaleString("ja-JP")}
             <span class="currency">円</span>
@@ -207,17 +187,13 @@ function Overview({
                   <span class="sr-only">から</span>
                   <span>{dash(card.commuter.end_station)}</span>
                 </div>
-                <p class="muted">有効期間</p>
                 <p class="commuter-dates">
                   {card.commuter.valid_from} 〜 {card.commuter.valid_to}
                 </p>
                 <p class="muted commuter-issuer">{card.commuter.issuer_id}</p>
               </>
             ) : (
-              <div class="commuter-empty">
-                <p>定期券の登録はありません</p>
-                <p class="muted">区間・有効期間の記録はありません。</p>
-              </div>
+              <p class="commuter-empty muted">定期券なし</p>
             )}
           </div>
         </div>
@@ -296,13 +272,7 @@ function Overview({
   );
 }
 
-function CardInfo({ card }: { card: CardData | null }) {
-  if (!card) {
-    return (
-      <EmptyCard title="カード情報" message="カードが読み取られていません。" />
-    );
-  }
-
+function CardInfo({ card }: { card: CardData }) {
   const issue = card.issue_primary;
   const attribute = card.attribute;
   const topup = card.last_topup;
@@ -378,7 +348,7 @@ function CardInfo({ card }: { card: CardData | null }) {
             ]}
           />
         ) : (
-          <div class="empty">定期券なし</div>
+          <p class="empty">定期券なし</p>
         )}
       </CardPanel>
       <CardPanel title="オートチャージ">
@@ -415,45 +385,37 @@ function DataTable<Row>({
   label: string;
 }) {
   return (
-    <>
-      <p class="table-hint">表が収まらない場合は横にスクロールできます。</p>
-      <div
-        class="tablewrap"
-        role="region"
-        aria-label={`${label}の表（横にスクロールできます）`}
-        tabIndex={0}
-      >
-        <table aria-label={label}>
-          <thead>
-            <tr>
+    <div class="tablewrap" role="region" aria-label={label} tabIndex={0}>
+      <table aria-label={label}>
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th
+                scope="col"
+                class={column.numeric ? "num" : undefined}
+                key={column.label}
+              >
+                {column.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={index}>
               {columns.map((column) => (
-                <th
-                  scope="col"
+                <td
                   class={column.numeric ? "num" : undefined}
                   key={column.label}
                 >
-                  {column.label}
-                </th>
+                  {dash(column.value(row))}
+                </td>
               ))}
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={index}>
-                {columns.map((column) => (
-                  <td
-                    class={column.numeric ? "num" : undefined}
-                    key={column.label}
-                  >
-                    {dash(column.value(row))}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -490,10 +452,7 @@ const paidTicketColumns: Array<Column<PaidTicketEntry>> = [
   { label: "改札実施時刻", value: (entry) => entry.checked_time },
 ];
 
-function Gates({ card }: { card: CardData | null }) {
-  if (!card)
-    return <EmptyCard title="改札" message="カードが読み取られていません。" />;
-
+function Gates({ card }: { card: CardData }) {
   return (
     <>
       <CardPanel title="改札入出場履歴">
@@ -504,7 +463,7 @@ function Gates({ card }: { card: CardData | null }) {
             label="改札入出場履歴"
           />
         ) : (
-          <div class="empty">改札入出場記録なし</div>
+          <p class="empty">記録なし</p>
         )}
       </CardPanel>
       {card.sf_gate.has_record ? (
@@ -522,7 +481,7 @@ function Gates({ card }: { card: CardData | null }) {
         </CardPanel>
       ) : (
         <CardPanel title="SF改札入場情報">
-          <p class="empty">このカードには入場記録がありません。</p>
+          <p class="empty">記録なし</p>
         </CardPanel>
       )}
       <CardPanel title="料金発券・改札情報">
@@ -533,11 +492,11 @@ function Gates({ card }: { card: CardData | null }) {
             label="料金発券・改札情報"
           />
         ) : (
-          <div class="empty">
+          <p class="empty">
             {card.paid_ticket_available
               ? "記録なし"
               : card.paid_ticket_reason || "記録なし"}
-          </div>
+          </p>
         )}
       </CardPanel>
     </>
@@ -583,7 +542,7 @@ function download(name: string, text: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
-function DataView({ card }: { card: CardData | null }) {
+function DataView({ card }: { card: CardData }) {
   const [feedback, setFeedback] = useState<{
     message: string;
     error?: boolean;
@@ -611,7 +570,6 @@ function DataView({ card }: { card: CardData | null }) {
   };
 
   const copyJson = async () => {
-    if (!card) return;
     setFeedback(null);
     try {
       await navigator.clipboard.writeText(JSON.stringify(card, null, 2));
@@ -626,7 +584,6 @@ function DataView({ card }: { card: CardData | null }) {
   };
 
   const exportData = (format: "json" | "csv") => {
-    if (!card) return;
     try {
       if (format === "json") {
         download(
@@ -655,51 +612,29 @@ function DataView({ card }: { card: CardData | null }) {
   };
 
   return (
-    <CardPanel title="データを書き出す">
-      <p class="section-intro">
-        {card
-          ? "カード情報は JSON、取引履歴は CSV で保存できます。"
-          : "カードを読み取ると、カード情報や取引履歴を保存できます。"}
-      </p>
+    <div class="card data-card">
       <div class="toolbar">
-        <button class="ghost" type="button" disabled={!card} onClick={copyJson}>
+        <button class="ghost" type="button" onClick={copyJson}>
           JSON をコピー
         </button>
-        <button
-          class="ghost"
-          type="button"
-          disabled={!card}
-          onClick={() => exportData("json")}
-        >
+        <button class="ghost" type="button" onClick={() => exportData("json")}>
           JSON を保存
         </button>
-        <button
-          class="ghost"
-          type="button"
-          disabled={!card}
-          onClick={() => exportData("csv")}
-        >
+        <button class="ghost" type="button" onClick={() => exportData("csv")}>
           履歴を CSV で保存
         </button>
-      </div>
-      <p
-        class={`export-feedback ${feedback?.error ? "error" : ""}`}
-        role="status"
-        aria-atomic="true"
-      >
-        {feedback?.message}
-      </p>
-      {card && (
-        <pre
-          class="json"
-          tabIndex={0}
-          role="region"
-          aria-label="カード情報 JSON"
+        <p
+          class={`export-feedback ${feedback?.error ? "error" : ""}`}
+          role="status"
+          aria-atomic="true"
         >
-          {JSON.stringify(card, null, 2)}
-        </pre>
-      )}
-    </CardPanel>
+          {feedback?.message}
+        </p>
+      </div>
+      <pre class="json" tabIndex={0} role="region" aria-label="カード情報 JSON">
+        {JSON.stringify(card, null, 2)}
+      </pre>
+    </div>
   );
 }
 
@@ -832,113 +767,113 @@ export function App() {
     document.getElementById(`tab-${nextTab}`)?.focus();
   };
 
+  const welcomeTitle = hasReaderError
+    ? readerLabel
+    : readerState === "reading"
+      ? "カードを離さずにお待ちください"
+      : readerState === "initializing"
+        ? "リーダーに接続しています"
+        : "カードをかざしてください";
+
   return (
     <main class="wrap">
-      <a class="skip-link" href={`#panel-${activeTab}`}>
-        カード情報へ移動
+      <a class="skip-link" href="#content">
+        本文へ移動
       </a>
       <header class="top">
         <div class="brand">
           <h1 translate={false}>Suica Viewer</h1>
-          <p class="app-caption">交通系 IC カードの残高・利用履歴</p>
+          {card && readAt && (
+            <p class="meta">
+              <span class="dot done" aria-hidden="true" />
+              {readAt} 読み取り
+            </p>
+          )}
         </div>
-        <label class="theme-control">
-          <span>表示</span>
-          <select
-            value={theme}
-            onChange={(event) => setTheme(event.currentTarget.value as Theme)}
-          >
-            <option value="system">システム</option>
-            <option value="light">ライト</option>
-            <option value="dark">ダーク</option>
-          </select>
-        </label>
+        <select
+          class="theme-select"
+          aria-label="テーマ"
+          value={theme}
+          onChange={(event) => setTheme(event.currentTarget.value as Theme)}
+        >
+          <option value="system">システム</option>
+          <option value="light">ライト</option>
+          <option value="dark">ダーク</option>
+        </select>
       </header>
 
-      <div class="reader-bar">
-        <span class="status" role="status" aria-atomic="true">
-          <span
-            class={`dot ${hasReaderError ? "error" : readerState}`}
-            aria-hidden="true"
-          />
-          <span>{readerLabel}</span>
-        </span>
-        {readAt && <span class="meta">読取日時: {readAt}</span>}
-      </div>
-
+      <p class="sr-only" role="status" aria-atomic="true">
+        {readerLabel}
+      </p>
       <div role="alert" aria-atomic="true">
         {hasReaderError && (
-          <div class="reader-notice error">
+          <div class="reader-notice">
             <p class="reader-notice-title">{recoveryMessage}</p>
             <p class="reader-notice-detail">{statusMessage}</p>
           </div>
         )}
       </div>
-      {isReading && (
-        <div class="reader-notice reading">
-          <p class="reader-notice-title">
-            読み取りが終わるまで、カードを動かさずにお待ちください。
-          </p>
-          <progress
-            class="progress"
-            max={100}
-            value={progress}
-            aria-label="カード情報の読み取り"
-          />
+
+      {!card ? (
+        <Welcome
+          readerState={hasReaderError ? "error" : readerState}
+          title={welcomeTitle}
+          progress={progress}
+        />
+      ) : (
+        <div id="content" tabIndex={-1}>
+          <div class="tabs" role="tablist" aria-label="カード情報">
+            {tabs.map((tab) => (
+              <button
+                type="button"
+                role="tab"
+                id={`tab-${tab.id}`}
+                aria-controls={`panel-${tab.id}`}
+                aria-selected={activeTab === tab.id}
+                tabIndex={activeTab === tab.id ? 0 : -1}
+                onClick={() => setActiveTab(tab.id)}
+                onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
+                key={tab.id}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {tabs.map((tab) => (
+            <section
+              class="tab-panel"
+              role="tabpanel"
+              id={`panel-${tab.id}`}
+              aria-labelledby={`tab-${tab.id}`}
+              tabIndex={0}
+              hidden={activeTab !== tab.id}
+              aria-busy={isReading}
+              key={tab.id}
+            >
+              {tab.id === "overview" && (
+                <Overview
+                  card={card}
+                  onHistory={() => {
+                    setActiveTab("history");
+                    requestAnimationFrame(() =>
+                      document.getElementById("tab-history")?.focus(),
+                    );
+                  }}
+                />
+              )}
+              {tab.id === "cardinfo" && <CardInfo card={card} />}
+              {tab.id === "history" && (
+                <History key={card.system.idm_hex} card={card} />
+              )}
+              {tab.id === "gates" && <Gates card={card} />}
+              {tab.id === "data" && (
+                <DataView key={card.system.idm_hex} card={card} />
+              )}
+            </section>
+          ))}
         </div>
       )}
-
-      <div class="tabs" role="tablist" aria-label="カード情報">
-        {tabs.map((tab) => (
-          <button
-            type="button"
-            role="tab"
-            id={`tab-${tab.id}`}
-            aria-controls={`panel-${tab.id}`}
-            aria-selected={activeTab === tab.id}
-            tabIndex={activeTab === tab.id ? 0 : -1}
-            onClick={() => setActiveTab(tab.id)}
-            onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
-            key={tab.id}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {tabs.map((tab) => (
-        <section
-          class="tab-panel"
-          role="tabpanel"
-          id={`panel-${tab.id}`}
-          aria-labelledby={`tab-${tab.id}`}
-          tabIndex={0}
-          hidden={activeTab !== tab.id}
-          aria-busy={isReading}
-          key={tab.id}
-        >
-          {tab.id === "overview" && (
-            <Overview
-              card={card}
-              readerState={hasReaderError ? "error" : readerState}
-              onHistory={() => {
-                setActiveTab("history");
-                requestAnimationFrame(() =>
-                  document.getElementById("panel-history")?.focus(),
-                );
-              }}
-            />
-          )}
-          {tab.id === "cardinfo" && <CardInfo card={card} />}
-          {tab.id === "history" && (
-            <History key={card?.system.idm_hex ?? "no-card"} card={card} />
-          )}
-          {tab.id === "gates" && <Gates card={card} />}
-          {tab.id === "data" && (
-            <DataView key={card?.system.idm_hex ?? "no-card"} card={card} />
-          )}
-        </section>
-      ))}
     </main>
   );
 }

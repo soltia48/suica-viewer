@@ -110,7 +110,7 @@ const summaryColumns = [
 ];
 const searchableColumns = [...historyColumns, routeColumn];
 
-export function History({ card }: { card: CardData | null }) {
+export function History({ card }: { card: CardData }) {
   const [filter, setFilter] = useState("");
   const [showDetails, setShowDetails] = useState(false);
   const [sort, setSort] = useState<{ key: string | null; direction: 1 | -1 }>({
@@ -122,7 +122,6 @@ export function History({ card }: { card: CardData | null }) {
   const query = filter.trim().toLocaleLowerCase("ja");
 
   const rows = useMemo(() => {
-    if (!card) return [];
     const filtered = query
       ? card.transaction_history.filter((entry) =>
           searchableColumns.some((column) =>
@@ -170,52 +169,43 @@ export function History({ card }: { card: CardData | null }) {
 
   return (
     <div class="history-panel">
-      <div class="section-heading">
-        <h2>取引履歴</h2>
-        <p>カードに保存されている利用とチャージの記録です。</p>
-      </div>
-
-      {!card ? (
-        <div class="empty-state">
-          <h3 class="empty-title">カードを読み取ると、履歴を確認できます</h3>
-          <p class="empty-description">
-            リーダーにカードをかざし、読み取りが終わるまでそのままお待ちください。
-          </p>
-        </div>
-      ) : card.transaction_history.length === 0 ? (
-        <div class="empty-state">
-          <h3 class="empty-title">取引履歴はありません</h3>
-          <p class="empty-description">
-            このカードには利用やチャージの記録がありません。利用後にもう一度カードをかざしてください。
-          </p>
-        </div>
+      {card.transaction_history.length === 0 ? (
+        <p class="empty-state">記録なし</p>
       ) : (
         <>
           <div class="history-controls">
-            <div class="search-field" role="search" aria-label="取引履歴">
-              <label for="history-search">履歴を検索</label>
-              <div class="search-input-row">
-                <input
-                  id="history-search"
-                  ref={searchInput}
-                  type="search"
-                  placeholder="例：新宿、チャージ、2026-09"
-                  aria-describedby="history-search-hint"
-                  value={filter}
-                  onInput={(event) => setFilter(event.currentTarget.value)}
+            <div class="search-field" role="search">
+              <svg
+                class="search-icon"
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="7"
+                  cy="7"
+                  r="4.5"
+                  stroke="currentColor"
+                  stroke-width="1.5"
                 />
-                <button
-                  class="ghost"
-                  type="button"
-                  disabled={!filter}
-                  onClick={clearSearch}
-                >
-                  検索をクリア
-                </button>
-              </div>
-              <p id="history-search-hint" class="field-hint">
-                支払種別や機器など、非表示の詳細列も検索できます。
-              </p>
+                <path
+                  d="m10.5 10.5 3 3"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <input
+                id="history-search"
+                ref={searchInput}
+                type="search"
+                aria-label="取引履歴を検索"
+                placeholder="新宿、チャージ、2026-09"
+                value={filter}
+                onInput={(event) => setFilter(event.currentTarget.value)}
+              />
             </div>
             <label class="detail-toggle">
               <input
@@ -225,29 +215,16 @@ export function History({ card }: { card: CardData | null }) {
               />
               <span>詳細列を表示</span>
             </label>
-          </div>
-
-          <div class="history-options">
             <p class="result-count" role="status" aria-atomic="true">
               {query
-                ? `${rows.length.toLocaleString("ja-JP")} 件 / 全 ${card.transaction_history.length.toLocaleString("ja-JP")} 件`
-                : `全 ${rows.length.toLocaleString("ja-JP")} 件`}
+                ? `${rows.length.toLocaleString("ja-JP")} / ${card.transaction_history.length.toLocaleString("ja-JP")} 件`
+                : `${rows.length.toLocaleString("ja-JP")} 件`}
             </p>
-            {rows.length > 0 && (
-              <p id="history-scroll-hint" class="table-hint">
-                列名で並べ替え · 表が収まらない場合は横にスクロール
-              </p>
-            )}
           </div>
 
           {rows.length === 0 ? (
             <div class="empty-state">
-              <h3 class="empty-title">
-                「{filter.trim()}」に一致する取引はありません
-              </h3>
-              <p class="empty-description">
-                別の駅名や取引種別を入力するか、検索をクリアしてすべての履歴を表示してください。
-              </p>
+              <p class="empty-title">「{filter.trim()}」に一致する取引なし</p>
               <button class="ghost" type="button" onClick={clearSearch}>
                 検索をクリア
               </button>
@@ -257,7 +234,6 @@ export function History({ card }: { card: CardData | null }) {
               class="tablewrap"
               role="region"
               aria-label="取引履歴の表"
-              aria-describedby="history-scroll-hint"
               tabIndex={0}
             >
               <table
