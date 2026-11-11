@@ -78,7 +78,7 @@ function Welcome({
   progress: number;
 }) {
   return (
-    <div class="welcome card" id="content" tabIndex={-1}>
+    <div class="welcome" id="content" tabIndex={-1}>
       <svg
         class="reader-illustration"
         width="80"
@@ -102,7 +102,7 @@ function Welcome({
           width="34"
           height="45"
           rx="5"
-          fill="var(--surface)"
+          fill="var(--bg)"
           stroke="currentColor"
           stroke-width="2"
         />
@@ -119,30 +119,22 @@ function Welcome({
           stroke-linecap="round"
         />
       </svg>
-      <h2>{title}</h2>
-      {readerState === "reading" ? (
-        <progress
-          class="progress"
-          max={100}
-          value={progress}
-          aria-label="読み取りの進行状況"
-        />
-      ) : (
-        <ol class="read-steps">
-          <li>
-            <span class="step-number" aria-hidden="true">
-              1
-            </span>
-            <span>リーダーを PC に接続</span>
-          </li>
-          <li>
-            <span class="step-number" aria-hidden="true">
-              2
-            </span>
-            <span>カードをリーダーに置く</span>
-          </li>
-        </ol>
-      )}
+      <div class="welcome-text">
+        <h2>{title}</h2>
+        {readerState === "reading" ? (
+          <progress
+            class="progress"
+            max={100}
+            value={progress}
+            aria-label="読み取りの進行状況"
+          />
+        ) : (
+          <ol class="read-steps">
+            <li>リーダーを PC に接続</li>
+            <li>カードをリーダーに置く</li>
+          </ol>
+        )}
+      </div>
     </div>
   );
 }
@@ -157,53 +149,49 @@ function Overview({
   return (
     <>
       <div class="overview-summary">
-        <div class="hero">
-          <h2 class="cap">残高</h2>
-          <div class="amount">
+        <div class="balance">
+          <h2 class="balance-label">残額</h2>
+          <p class="balance-amount">
             {card.attribute.balance.toLocaleString("ja-JP")}
-            <span class="currency">円</span>
-          </div>
-          <div class="sub">
-            {card.issue_primary.issuer_id || "交通系 IC カード"}
-          </div>
+            <span class="balance-unit">円</span>
+          </p>
           {card.issue_primary.collected && (
-            <div class="flag">取り込み済み（無効カード）</div>
+            <p class="flag">取り込み済み（無効カード）</p>
           )}
-          <div class="hero-footer">
-            <span>最終チャージ</span>
-            <strong>{yen(card.last_topup.amount)}</strong>
-          </div>
+          <dl class="balance-facts">
+            <div>
+              <dt>最終チャージ</dt>
+              <dd>{yen(card.last_topup.amount)}</dd>
+            </div>
+            <div>
+              <dt>発行者</dt>
+              <dd>{dash(card.issue_primary.issuer_id)}</dd>
+            </div>
+          </dl>
         </div>
-        <div class="commuter-summary card">
-          <h2>定期券</h2>
-          <div class="body">
-            {hasCommuter(card) ? (
-              <>
-                <div class="commuter-route">
-                  <span>{dash(card.commuter.start_station)}</span>
-                  <span class="route-connector" aria-hidden="true">
-                    →
-                  </span>
-                  <span class="sr-only">から</span>
-                  <span>{dash(card.commuter.end_station)}</span>
-                </div>
-                <p class="commuter-dates">
-                  {card.commuter.valid_from} 〜 {card.commuter.valid_to}
-                </p>
-                <p class="muted commuter-issuer">{card.commuter.issuer_id}</p>
-              </>
-            ) : (
-              <p class="commuter-empty muted">定期券なし</p>
-            )}
-          </div>
-        </div>
+        <section class="commuter-summary" aria-labelledby="commuter-heading">
+          <h2 id="commuter-heading">定期券</h2>
+          {hasCommuter(card) ? (
+            <>
+              <ol class="route">
+                <li>{dash(card.commuter.start_station)}</li>
+                <li>{dash(card.commuter.end_station)}</li>
+              </ol>
+              <p class="commuter-dates">
+                {card.commuter.valid_from} 〜 {card.commuter.valid_to}
+              </p>
+            </>
+          ) : (
+            <p class="muted">定期券なし</p>
+          )}
+        </section>
       </div>
 
       <div class="card recent-card">
         <div class="card-heading">
           <h2>最近の取引</h2>
           <button class="ghost" type="button" onClick={onHistory}>
-            取引履歴を見る <span aria-hidden="true">→</span>
+            取引履歴を見る
           </button>
         </div>
         <div class="body">

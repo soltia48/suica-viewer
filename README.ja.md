@@ -19,7 +19,7 @@ Suica Viewer は、FeliCa 方式の交通系 IC カードから詳しい情報�
 
 残高、定期券、最近の取引をひと目で確認できます。
 
-![デモカードの残高、定期券情報、最近の取引を表示した概要画面](docs/screenshots/overview.png)
+![デモカードの残額、定期券の区間、最近の取引を表示した概要画面](docs/screenshots/overview.png)
 
 ### 取引履歴
 
@@ -50,7 +50,7 @@ Suica Viewer は、FeliCa 方式の交通系 IC カードから詳しい情報�
 
 ### ダークテーマ
 
-![デモカードの残高、定期券情報、最近の取引をダークテーマで表示した概要画面](docs/screenshots/overview-dark.png)
+![デモカードの残額、定期券の区間、最近の取引をダークテーマで表示した概要画面](docs/screenshots/overview-dark.png)
 
 </details>
 

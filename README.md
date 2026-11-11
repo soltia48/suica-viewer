@@ -19,7 +19,7 @@ The interface is in Japanese. These screenshots use the bundled demo data; run `
 
 Balance, commuter pass, and recent transactions.
 
-![Overview tab in the Japanese interface, showing the demo card balance, commuter pass, and recent transactions](docs/screenshots/overview.png)
+![Overview tab in the Japanese interface, showing the demo card balance, the commuter pass route, and recent transactions](docs/screenshots/overview.png)
 
 ### Transaction History
 
@@ -50,7 +50,7 @@ Copy or save the card data as JSON, or export the history as CSV.
 
 ### Dark Theme
 
-![Overview tab in dark theme, showing the demo card balance, commuter pass, and recent transactions](docs/screenshots/overview-dark.png)
+![Overview tab in dark theme, showing the demo card balance, the commuter pass route, and recent transactions](docs/screenshots/overview-dark.png)
 
 </details>
 
