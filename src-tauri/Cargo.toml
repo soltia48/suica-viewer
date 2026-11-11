@@ -1,6 +1,6 @@
 [package]
 name = "suica-viewer-app"
-version = "3.1.0"
+version = "3.2.0"
 edition = "2024"
 rust-version = "1.90"
 description = "Suica Viewer Tauri desktop application"
